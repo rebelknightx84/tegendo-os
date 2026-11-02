@@ -364,7 +364,60 @@ def render_templates(colors: dict, template_dirs: list[Path], out_dir: Path) -> 
         # keep each line's terminator, as awk's RT does
         pieces = re.split(r"(\n)", data)
         target.write_text("".join(r.render_line(p) if p != "\n" else p for p in pieces))
+    apply_shell_section_overrides(out_dir)
     return rendered
+
+
+HEADER_RE = re.compile(r"^[ \t\n\r\f\v]*\[[^]]+\][ \t\n\r\f\v]*($|#)")
+
+
+def _is_section_header(line: str, section: str) -> bool:
+    return re.match(rf"^[ \t\n\r\f\v]*\[{section}\][ \t\n\r\f\v]*($|#)", line) is not None
+
+
+def apply_shell_section_overrides(out_dir: Path) -> None:
+    """A theme's shell.<section>.toml replaces [<section>] in shell.toml.
+
+    Mirrors apply_shell_section_overrides in omarchy-theme-set-templates.
+    """
+    shell = out_dir / "shell.toml"
+    if not shell.is_file():
+        return
+    for override in sorted(out_dir.glob("shell.*.toml")):
+        if override.name == "shell.toml":
+            continue
+        section = override.name[len("shell."):-len(".toml")]
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", section):
+            continue
+        body = [ln for ln in override.read_text(errors="replace").splitlines()
+                if not (HEADER_RE.match(ln) and _is_section_header(ln, section))]
+
+        out: list[str] = []
+        in_section = emitted = False
+
+        def emit() -> None:
+            nonlocal emitted
+            if not emitted:
+                out.append(f"[{section}]")
+                out.extend(body)
+                emitted = True
+
+        lines = shell.read_text(errors="replace").splitlines()
+        for ln in lines:
+            if HEADER_RE.match(ln):
+                if in_section:
+                    emit()
+                    in_section = False
+                if _is_section_header(ln, section):
+                    in_section = True
+                    continue
+            if not in_section:
+                out.append(ln)
+        if in_section or not emitted:
+            if lines:
+                out.append("")
+            emit()
+        shell.write_text("\n".join(out) + "\n")
 
 
 # --------------------------------------------------------------------------

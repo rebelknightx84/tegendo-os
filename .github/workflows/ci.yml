@@ -17,7 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tools
-        run: pip install --quiet ansible-core ansible-lint shellcheck-py
+        run: |
+          pip install --quiet ansible-core ansible-lint shellcheck-py
+          ansible-galaxy collection install -r ansible/requirements.yml
       - name: shellcheck
         run: shellcheck -x bootstrap.sh tools/*.sh tests/*.sh src/bin/tos src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent
       - name: python
