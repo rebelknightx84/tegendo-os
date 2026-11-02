@@ -7,6 +7,7 @@ tos_base_packages:
   - pacman-contrib       # checkupdates (used by tos doctor)
   - python
   - jq
+  - pciutils           # lspci (GPU detection, tos doctor)
   - libnotify            # notify-send for crash toasts
   # snapshots & recovery
   - snapper

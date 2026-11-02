@@ -59,8 +59,11 @@ Useful commands: `tos theme list|set <name>|current`, `tos doctor`,
   Bootloader is usually **Limine**; kernel cmdline lives in
   `/etc/default/limine`, applied with `sudo limine-update`. Gotcha: confirm
   `nvidia_drm.modeset=1` reached the **LTS** entries too.
-- GPU: NVIDIA RTX 4080 with the `nvidia-open` driver, managed by CachyOS's
-  `chwd`. Don't hand-install a different NVIDIA branch.
+- GPU: varies by machine. Check the "Graphics devices" section of the doctor
+  report or `lspci -nn | grep -iE 'vga|3d|display'`. Laptops may be hybrid
+  (AMD/Intel integrated + NVIDIA discrete, PRIME render offload; the NVIDIA GPU
+  should power down when idle). NVIDIA drivers are chosen and managed by
+  CachyOS's `chwd` (`chwd --list-installed`); don't hand-install a different branch.
 - Display: Wayland, COSMIC compositor (`cosmic-comp`). Floating windows by
   default; tiling is a per-workspace toggle.
 - Theme pipeline: `tos theme set` renders Omarchy-format templates and imports
