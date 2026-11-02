@@ -1,0 +1,3 @@
+tests/cosmic-ron-check/target/
+*.retry
+__pycache__/

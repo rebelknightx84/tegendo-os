@@ -1,0 +1,54 @@
+---
+# Refuse to run anywhere this wasn't designed for. Fails early, changes nothing.
+
+- name: Read os-release
+  ansible.builtin.slurp:
+    src: /etc/os-release
+  register: tos_os_release
+
+- name: Read pacman.conf
+  ansible.builtin.slurp:
+    src: /etc/pacman.conf
+  register: tos_pacman_conf
+
+- name: Set preflight facts
+  ansible.builtin.set_fact:
+    tos_os_id: "{{ (tos_os_release.content | b64decode | regex_search('(?m)^ID=\"?([A-Za-z0-9_-]+)', '\\1') | first) | default('') }}"
+    tos_pacman_text: "{{ tos_pacman_conf.content | b64decode }}"
+
+- name: Assert this is CachyOS on x86_64, run as a normal user
+  ansible.builtin.assert:
+    that:
+      - tos_os_id == 'cachyos'
+      - ansible_facts['architecture'] == 'x86_64'
+      - ansible_facts['user_id'] != 'root'
+    fail_msg: >-
+      tegendo-os targets CachyOS on x86_64 and must run as your normal user
+      (it escalates with sudo only where needed). Found ID={{ tos_os_id }},
+      arch={{ ansible_facts['architecture'] }}, user={{ ansible_facts['user_id'] }}.
+    quiet: true
+
+- name: Assert CachyOS repositories are intact and no Omarchy repo was added
+  ansible.builtin.assert:
+    that:
+      - tos_pacman_text is search('(?m)^\[cachyos[^\]]*\]')
+      - tos_pacman_text is not search('(?m)^\[omarchy\]')
+    fail_msg: >-
+      /etc/pacman.conf must keep CachyOS's [cachyos*] repos and must not
+      contain an [omarchy] repo (Omarchy's installer replaces pacman.conf).
+      Restore the CachyOS default before continuing.
+    quiet: true
+
+- name: Check for disk encryption
+  ansible.builtin.command: lsblk -nro TYPE
+  register: tos_lsblk
+  changed_when: false
+  check_mode: false
+
+- name: Warn when no LUKS volume is present
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: no encrypted (LUKS) volume found. A stolen or dual-booted
+      machine can read everything on this disk. Reinstall with encryption
+      enabled in the CachyOS installer when convenient.
+  when: "'crypt' not in tos_lsblk.stdout_lines"

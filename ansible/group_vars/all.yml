@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# tegendo-os knobs. Everything you'd want to change lives here.
+# =============================================================================
+
+# Repo location on disk (tools like `tos apply` use it)
+tos_repo_dir: "{{ playbook_dir | dirname }}"
+tos_version: "0.1.0"
+
+# ---- base -------------------------------------------------------------------
+tos_extra_packages: []          # add your own pacman packages here
+
+# ---- security ---------------------------------------------------------------
+tos_firewall: true              # ufw: deny incoming, allow Tailscale
+tos_firewall_allow_tailscale: true
+tos_harden_sshd: true           # key-only + no root login IF openssh is installed
+                                # (never enables the SSH server by itself)
+
+# ---- nvidia -----------------------------------------------------------------
+# Report-only by default. Set true to let the role add nvidia_drm.modeset=1 /
+# fbdev=1 to /etc/default/limine and run limine-update. A snapshot is taken first.
+tos_fix_limine_cmdline: false
+
+# ---- desktop ----------------------------------------------------------------
+tos_terminal: ghostty
+tos_font: "JetBrainsMono Nerd Font"
+
+# ---- themes -----------------------------------------------------------------
+tos_default_theme: tokyo-night  # applied once, on first install only
+
+# ---- ai ---------------------------------------------------------------------
+# claude | codex | ollama | custom
+#   claude/codex: cloud models; doctor reports are redacted and you confirm
+#                 before each send. Install the CLI yourself (see docs/AI.md).
+#   ollama:       stays on your network (e.g. Stormbreaker over Tailscale);
+#                 advisory only, can't run commands.
+tos_agent: claude
+tos_agent_cmd: ""               # custom only
+tos_ollama_url: "http://127.0.0.1:11434"
+tos_ollama_model: "qwen3:14b"
+tos_ollama_local: false         # true = install ollama-cuda on THIS machine
+tos_crash_watch: true

@@ -1,0 +1,602 @@
+#!/usr/bin/env python3
+"""tos-theme — apply Omarchy-format themes on a COSMIC desktop.
+
+Omarchy themes and templates are consumed as *data* only. No upstream code
+runs on the machine: this file re-implements Omarchy's colors.toml resolver
+(omarchy-theme-color) and template renderer (omarchy-theme-set-templates),
+and tests/theme-parity.sh proves the output is byte-identical to upstream's
+for every vendored theme and template.
+
+Usage:
+  tos-theme list
+  tos-theme current
+  tos-theme set <name> [--no-apply]
+  tos-theme colors --file <colors.toml> (--all | --raw | <key> [fallback])
+  tos-theme render --colors <colors.toml> --out <dir> <template-dir>...
+  tos-theme cosmic-ron --colors <colors.toml>
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HOME = Path.home()
+SHARE = Path(os.environ.get("TOS_SHARE", "/usr/share/tegendo-os"))
+CONFIG = Path(os.environ.get("TOS_CONFIG", HOME / ".config/tegendo-os"))
+STATE = Path(os.environ.get("TOS_STATE", HOME / ".local/state/tegendo-os"))
+COSMIC_CONFIG = Path(os.environ.get("TOS_COSMIC_CONFIG", HOME / ".config/cosmic"))
+
+SYSTEM_THEMES = SHARE / "themes"
+SYSTEM_TEMPLATES = SHARE / "themed"          # vendored from Omarchy
+EXTRA_TEMPLATES = SHARE / "themed-extra"     # ours
+USER_THEMES = CONFIG / "themes"
+USER_TEMPLATES = CONFIG / "themed"
+CURRENT = STATE / "current"
+
+KEY_OK = re.compile(r"^[A-Za-z0-9_-]+$")
+VALUE_OK = re.compile(r"^[A-Za-z0-9#(),._+/% -]*$")
+HEX6 = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def warn(msg: str) -> None:
+    print(f"tos-theme: {msg}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------
+# colors.toml resolution — mirrors omarchy-theme-color exactly
+# --------------------------------------------------------------------------
+
+def _hexval(ch: str) -> int:
+    # awk: index("0123456789abcdef", tolower(c)) - 1, where index(s, "") == 0
+    return "0123456789abcdef".find(ch.lower()) if ch else -1
+
+
+def _pair(h: str, i: int) -> int:
+    return _hexval(h[i - 1:i]) * 16 + _hexval(h[i:i + 1])
+
+
+def _awk_num(s: str) -> float:
+    m = re.match(r"\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?", s)
+    return float(m.group(0)) if m else 0.0
+
+
+def mix_color(start: str, end: str, amount: str) -> str:
+    s = start[1:] if start.startswith("#") else start
+    e = end[1:] if end.startswith("#") else end
+    if amount.endswith("%"):
+        a = _awk_num(amount[:-1]) / 100
+    else:
+        a = _awk_num(amount)
+        if a > 1:
+            a /= 100
+    a = min(max(a, 0.0), 1.0)
+    out = []
+    for i in (1, 3, 5):
+        sv, ev = _pair(s, i), _pair(e, i)
+        out.append(int(sv * (1 - a) + ev * a + 0.5))
+    return "#" + "".join(f"{v:02x}" if v >= 0 else f"{v & 0xFFFFFFFF:x}" for v in out)
+
+
+def parse_colors(path: Path, raw_out: list | None = None) -> dict:
+    colors: dict[str, str] = {}
+    if not path.is_file():
+        return colors
+    for line in path.read_text(errors="replace").splitlines():
+        key, _, value = line.partition("=")
+        key = re.sub(r"[\"' ]", "", key)
+        if not key or key.startswith("#"):
+            continue
+        m = re.search(r"[\"']", value)
+        if m:
+            rest = value[m.end():]
+            q = re.search(r"[\"']", rest)
+            value = rest[: q.start()] if q else rest
+        else:
+            value = value.strip(" \t\n\r\v\f")
+        if not KEY_OK.match(key):
+            warn("skipping key with unsupported characters")
+            continue
+        if not VALUE_OK.match(value):
+            warn(f"skipping {key}: unsupported characters in value")
+            continue
+        colors[key] = value
+        if raw_out is not None:
+            raw_out.append((key, value))
+    return colors
+
+
+def resolve_colors(colors: dict, colors_dir: Path) -> dict:
+    c = dict(colors)
+    g = lambda k: c.get(k, "")  # noqa: E731  (bash: unset == empty)
+
+    def alias(key: str, fallback: str) -> None:
+        if not g(key):
+            c[key] = g(fallback)
+
+    legacy_palette = {
+        "background": "bg", "dark_background": "dark_bg",
+        "darker_background": "darker_bg", "lighter_background": "lighter_bg",
+        "foreground": "fg", "dark_foreground": "dark_fg",
+        "light_foreground": "light_fg", "bright_foreground": "bright_fg",
+    }
+    for k, v in legacy_palette.items():
+        alias(k, v)
+
+    if not g("background"):
+        c["background"] = g("color0")
+    if not g("foreground"):
+        c["foreground"] = g("color7")
+    if g("background"):
+        c["color0"] = g("background")
+    if g("foreground"):
+        c["color7"] = g("foreground")
+
+    legacy = {
+        "red": "color1", "green": "color2", "yellow": "color3", "blue": "color4",
+        "magenta": "color5", "cyan": "color6", "bright_red": "color9",
+        "bright_green": "color10", "bright_yellow": "color11",
+        "bright_blue": "color12", "bright_magenta": "color13",
+        "bright_cyan": "color14",
+    }
+    for k, v in legacy.items():
+        alias(k, v)
+    alias("magenta", "purple")
+    alias("bright_magenta", "bright_purple")
+
+    def either(*keys: str) -> str:
+        for k in keys:
+            if g(k):
+                return g(k)
+        return ""
+
+    if not g("light_foreground"):
+        c["light_foreground"] = either("color7", "foreground")
+    if not g("bright_foreground"):
+        c["bright_foreground"] = either("color15", "foreground")
+    c["cursor"] = g("bright_foreground")
+    if not g("lighter_background"):
+        c["lighter_background"] = either("color0", "background")
+    if not g("dark_foreground"):
+        c["dark_foreground"] = either("color8", "foreground")
+    if not g("muted"):
+        c["muted"] = either("color8", "dark_foreground")
+    if not g("selection"):
+        c["selection"] = either("selection_background", "color8", "color0", "background")
+    if not g("selection_background"):
+        c["selection_background"] = g("selection")
+    if not g("selection_foreground"):
+        c["selection_foreground"] = g("bright_foreground")
+    if not g("orange"):
+        c["orange"] = g("yellow")
+    if not g("brown"):
+        c["brown"] = mix_color(g("orange"), "#000000", "50%")
+
+    if not g("dark_background"):
+        c["dark_background"] = mix_color(g("background"), "#000000", "25%")
+    if not g("darker_background"):
+        c["darker_background"] = mix_color(g("background"), "#000000", "50%")
+    for k in ("red", "yellow", "green", "cyan", "blue", "magenta"):
+        if not g(f"bright_{k}"):
+            c[f"bright_{k}"] = mix_color(g(k), "#ffffff", "20%")
+    alias("purple", "magenta")
+    alias("bright_purple", "bright_magenta")
+
+    ansi = {
+        "color0": "background", "color1": "red", "color2": "green",
+        "color3": "yellow", "color4": "blue", "color5": "magenta",
+        "color6": "cyan", "color7": "foreground", "color8": "muted",
+        "color9": "bright_red", "color10": "bright_green",
+        "color11": "bright_yellow", "color12": "bright_blue",
+        "color13": "bright_magenta", "color14": "bright_cyan",
+        "color15": "bright_foreground",
+    }
+    for k, v in ansi.items():
+        alias(k, v)
+    for k, short in legacy_palette.items():
+        if g(k):
+            c[short] = g(k)
+
+    # theme mode
+    if not g("mode"):
+        c["mode"] = g("theme_type")
+    if not g("mode"):
+        if (colors_dir / "light.mode").is_file():
+            c["mode"] = "light"
+        elif HEX6.match(g("background")):
+            h = g("background")[1:]
+            lum = int(h[0:2], 16) + int(h[2:4], 16) + int(h[4:6], 16)
+            c["mode"] = "light" if lum > 382 else "dark"
+        else:
+            c["mode"] = "dark"
+    c["theme_type"] = g("mode")
+    return c
+
+
+# --------------------------------------------------------------------------
+# template rendering — mirrors omarchy-theme-set-templates exactly
+# --------------------------------------------------------------------------
+
+MIX_RE = (r"\{\{[ \t\n\r\f\v]*mix(_strip|_rgb)?[ \t\n\r\f\v]+[A-Za-z0-9_]+"
+          r"[ \t\n\r\f\v]+[A-Za-z0-9_]+[ \t\n\r\f\v]+[0-9]+([.][0-9]+)?%?"
+          r"[ \t\n\r\f\v]*\}\}")
+GRAD_RE = (r"\{\{[ \t\n\r\f\v]*(hypr_gradient|gradient_start|shell_gradient)"
+           r"[ \t\n\r\f\v]+[^}]+[ \t\n\r\f\v]*\}\}")
+TOKEN_RE = re.compile(f"{MIX_RE}|{GRAD_RE}")
+ANGLE_RE = re.compile(r"^-?[0-9]+([.][0-9]+)?deg$")
+
+
+class Renderer:
+    def __init__(self, colors: dict):
+        self.c = colors
+        self.values: dict[str, str] = {}
+        for k, v in colors.items():
+            self.values[f"{{{{ {k} }}}}"] = v
+            self.values[f"{{{{ {k}_strip }}}}"] = v[1:] if v.startswith("#") else v
+            if HEX6.match(v):
+                r, gg, b = (int(v[i:i + 2], 16) for i in (1, 3, 5))
+                self.values[f"{{{{ {k}_rgb }}}}"] = f"{r},{gg},{b}"
+
+    # --- gradient helpers --------------------------------------------------
+    def _ref(self, ref: str, fallback: str = "") -> str:
+        if ref in self.c:
+            return self.c[ref]
+        if fallback and fallback in self.c:
+            return self.c[fallback]
+        return fallback if fallback else ref
+
+    def _gcolor(self, part: str) -> str:
+        part = part.strip(" \t\n")
+        return self.c.get(part, part)
+
+    def _parse(self, spec: str):
+        colors, angle = [], ""
+        for part in spec.split():
+            if ANGLE_RE.match(part):
+                angle = part[:-3]
+            else:
+                colors.append(self._gcolor(part))
+        return colors, angle
+
+    def _shell_hex(self, color: str) -> str:
+        color = self._gcolor(color)
+        if re.match(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$", color):
+            return "#" + color[1:7]
+        m = re.match(r"^[Rr][Gg][Bb][Aa]?\(([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?\)$", color)
+        if m:
+            return "#" + m.group(1)
+        m = re.match(r"^[Rr][Gg][Bb][Aa]?\(([0-9]+),([0-9]+),([0-9]+)(,[0-9.]+)?\)$", color)
+        if m:
+            r, gg, b = (min(int(x), 255) for x in m.group(1, 2, 3))
+            return f"#{r:02x}{gg:02x}{b:02x}"
+        if re.match(r"^0x[0-9A-Fa-f]{8}$", color):
+            return "#" + color[4:10]
+        return color
+
+    def _func(self, token: str) -> str | None:
+        content = token[2:-2].split(None, 2)
+        content += [""] * (3 - len(content))
+        fn, key, fallback = content[0], content[1], content[2].strip()
+        spec = self._ref(key, fallback)
+        cols, angle = self._parse(spec)
+        if fn == "hypr_gradient":
+            if not cols:
+                return f'"{spec}"'
+            if len(cols) == 1:
+                return f'"{cols[0]}"'
+            v = "{ colors = {" + ",".join(f' "{x}"' for x in cols) + " }"
+            if angle:
+                v += f", angle = {angle}"
+            return v + " }"
+        if fn == "gradient_start":
+            return self._shell_hex(spec if not cols else cols[0])
+        if fn == "shell_gradient":
+            if not cols:
+                return spec
+            return " ".join(cols) + (f" {angle}deg" if angle else "")
+        return None
+
+    def _mix(self, token: str) -> str | None:
+        parts = token[2:-2].split()
+        if len(parts) < 4:
+            return None
+        fn, sk, ek, amount = parts[:4]
+        s, e = self.c.get(sk, ""), self.c.get(ek, "")
+        if not (HEX6.match(s) and HEX6.match(e)) or fn not in ("mix", "mix_strip", "mix_rgb"):
+            return None
+        v = mix_color(s, e, amount)
+        if fn == "mix_strip":
+            return v[1:]
+        if fn == "mix_rgb":
+            h = v[1:]
+            return f"{int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)}"
+        return v
+
+    def add_function_tokens(self, templates: list[Path]) -> None:
+        for tpl in templates:
+            for m in TOKEN_RE.finditer(tpl.read_text(errors="replace")):
+                tok = m.group(0)
+                if tok in self.values:
+                    continue
+                v = self._mix(tok) if re.fullmatch(MIX_RE, tok) else self._func(tok)
+                if v is not None:
+                    self.values[tok] = v
+
+    def render_line(self, line: str) -> str:
+        out = []
+        while True:
+            o = line.find("{{")
+            if o < 0:
+                break
+            span = line.find("}}", o + 2)
+            if span < 0:
+                break
+            tok = line[o: span + 2]
+            if tok in self.values:
+                out.append(line[:o] + self.values[tok])
+                line = line[o + len(tok):]
+            else:
+                out.append(line[: o + 1])
+                line = line[o + 1:]
+        return "".join(out) + line
+
+
+def render_templates(colors: dict, template_dirs: list[Path], out_dir: Path) -> list[str]:
+    templates: list[Path] = []
+    for d in template_dirs:
+        if d.is_dir():
+            templates += sorted(d.glob("*.tpl"))
+    r = Renderer(colors)
+    r.add_function_tokens(templates)
+    rendered: list[str] = []
+    for tpl in templates:
+        name = tpl.name[:-4]
+        target = out_dir / name
+        if target.exists() or name in rendered:
+            continue  # theme ships its own file, or a higher-priority template won
+        rendered.append(name)
+        data = tpl.read_text(errors="replace")
+        # keep each line's terminator, as awk's RT does
+        pieces = re.split(r"(\n)", data)
+        target.write_text("".join(r.render_line(p) if p != "\n" else p for p in pieces))
+    return rendered
+
+
+# --------------------------------------------------------------------------
+# COSMIC bridge
+# --------------------------------------------------------------------------
+
+DARK_PALETTE = (SHARE / "cosmic/dark.ron")
+LIGHT_PALETTE = (SHARE / "cosmic/light.ron")
+
+
+def _cosmic_hex(v: str) -> str | None:
+    return f'"#{v[1:].upper()}FF"' if HEX6.match(v) else None
+
+
+def cosmic_theme_ron(c: dict, name: str, palette_dir: Path | None = None) -> str:
+    """ThemeBuilder RON, as `cosmic-settings appearance import` reads it."""
+    pdir = palette_dir or (SHARE / "cosmic")
+    is_light = c.get("mode") == "light"
+    palette = (pdir / ("light.ron" if is_light else "dark.ron")).read_text().strip()
+    palette = re.sub(r'name: "[^"]*"', f'name: "tos-{name}"', palette, count=1)
+
+    def opt(key: str) -> str:
+        v = _cosmic_hex(c.get(key, ""))
+        return f"Some({v})" if v else "None"
+
+    radii = {"radius_0": 0.0, "radius_xs": 4.0, "radius_s": 8.0,
+             "radius_m": 16.0, "radius_l": 32.0, "radius_xl": 160.0}
+    spacing = {"space_none": 0, "space_xxxs": 4, "space_xxs": 8, "space_xs": 12,
+               "space_s": 16, "space_m": 24, "space_l": 32, "space_xl": 48,
+               "space_xxl": 64, "space_xxxl": 128}
+    lines = [
+        "(",
+        f"    palette: {palette},",
+        "    spacing: (" + ", ".join(f"{k}: {v}" for k, v in spacing.items()) + "),",
+        "    corner_radii: (" + ", ".join(
+            f"{k}: ({v:.1f}, {v:.1f}, {v:.1f}, {v:.1f})" for k, v in radii.items()) + "),",
+        "    neutral_tint: None,",
+        f"    bg_color: {opt('background')},",
+        "    primary_container_bg: None,",
+        "    secondary_container_bg: None,",
+        f"    text_tint: {opt('foreground')},",
+        f"    accent: {opt('accent')},",
+        f"    success: {opt('green')},",
+        f"    warning: {opt('yellow')},",
+        f"    destructive: {opt('red')},",
+        "    gaps: (0, 8),",
+        "    active_hint: 3,",
+        f"    window_hint: {opt('accent')},",
+        ")",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def cosmic_background_entry(image: Path) -> str:
+    return (f'(output: "all", source: Path("{image}"), filter_by_theme: false, '
+            f"rotation_frequency: 900)\n")
+
+
+# --------------------------------------------------------------------------
+# theme lifecycle
+# --------------------------------------------------------------------------
+
+def slug(name: str) -> str:
+    return re.sub(r"\s+", "-", name.strip().lower())
+
+
+def theme_dirs(name: str) -> list[Path]:
+    s = slug(name)
+    return [d for d in (SYSTEM_THEMES / s, USER_THEMES / s) if d.is_dir()]
+
+
+def list_themes() -> list[str]:
+    names = set()
+    for base in (SYSTEM_THEMES, USER_THEMES):
+        if base.is_dir():
+            names |= {p.name for p in base.iterdir() if (p / "colors.toml").is_file()}
+    return sorted(names)
+
+
+def stage_theme(name: str) -> Path:
+    dirs = theme_dirs(name)
+    if not dirs:
+        raise SystemExit(f"tos-theme: no theme named '{name}' (try: tos-theme list)")
+    CURRENT.mkdir(parents=True, exist_ok=True)
+    nxt = Path(tempfile.mkdtemp(prefix="next-theme.", dir=CURRENT))
+    try:
+        for d in dirs:  # system first, user overlay on top
+            shutil.copytree(d, nxt, dirs_exist_ok=True)
+        colors_file = nxt / "colors.toml"
+        if colors_file.is_file():
+            colors = resolve_colors(parse_colors(colors_file), nxt)
+            render_templates(colors, [USER_TEMPLATES, EXTRA_TEMPLATES, SYSTEM_TEMPLATES], nxt)
+            (nxt / "cosmic-theme.ron").write_text(cosmic_theme_ron(colors, slug(name)))
+    except BaseException:
+        shutil.rmtree(nxt, ignore_errors=True)  # never leave a half-built theme behind
+        raise
+    return nxt
+
+
+def activate(nxt: Path, name: str) -> Path:
+    cur = CURRENT / "theme"
+    old = None
+    if cur.exists():
+        old = CURRENT / f".old-theme.{os.getpid()}"
+        cur.rename(old)
+    nxt.rename(cur)
+    (CURRENT / "theme.name").write_text(slug(name) + "\n")
+    if old:
+        shutil.rmtree(old, ignore_errors=True)
+    return cur
+
+
+def first_background(theme: Path) -> Path | None:
+    bg = theme / "backgrounds"
+    if not bg.is_dir():
+        return None
+    imgs = sorted(p for p in bg.iterdir()
+                  if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"))
+    return imgs[0] if imgs else None
+
+
+def apply_cosmic(theme: Path) -> list[str]:
+    report = []
+    ron = theme / "cosmic-theme.ron"
+    if shutil.which("cosmic-settings") and ron.is_file():
+        r = subprocess.run(["cosmic-settings", "appearance", "import", str(ron)],
+                           capture_output=True, text=True, timeout=30)
+        report.append("cosmic: theme imported" if r.returncode == 0 else
+                      f"cosmic: import failed ({(r.stderr or r.stdout).strip()[:200]}); "
+                      f"import {ron} from Settings > Appearance")
+    else:
+        report.append("cosmic: cosmic-settings not found, skipped desktop colors")
+
+    img = first_background(theme)
+    if img:
+        # Keep a stable path so COSMIC isn't pointed into a dir that gets swapped.
+        keep = STATE / "wallpaper" / img.name
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        for old in keep.parent.iterdir():
+            if old != keep:
+                old.unlink()
+        shutil.copy2(img, keep)
+        entry = COSMIC_CONFIG / "com.system76.CosmicBackground/v1/all"
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text(cosmic_background_entry(keep))
+        report.append(f"cosmic: wallpaper -> {img.name}")
+    return report
+
+
+def reload_apps() -> list[str]:
+    report = []
+    for proc, sig, label in (("ghostty", "USR2", "ghostty"), ("kitty", "USR1", "kitty")):
+        if subprocess.run(["pkill", f"-{sig}", "-x", proc], capture_output=True).returncode == 0:
+            report.append(f"{label}: reloaded")
+    hook = CONFIG / "hooks/theme-set"
+    if hook.is_file() and os.access(hook, os.X_OK):
+        subprocess.run([str(hook)], check=False)
+        report.append("hook: ran ~/.config/tegendo-os/hooks/theme-set")
+    return report
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    cmd, args = argv[0], argv[1:]
+
+    if cmd == "list":
+        print("\n".join(list_themes()))
+        return 0
+
+    if cmd == "current":
+        f = CURRENT / "theme.name"
+        print(f.read_text().strip() if f.is_file() else "(none)")
+        return 0
+
+    if cmd == "set":
+        if not args:
+            raise SystemExit("usage: tos-theme set <name> [--no-apply]")
+        name = " ".join(a for a in args if a != "--no-apply")
+        theme = activate(stage_theme(name), name)
+        print(f"theme: {slug(name)}")
+        if "--no-apply" not in args:
+            for line in apply_cosmic(theme) + reload_apps():
+                print(f"  {line}")
+        return 0
+
+    if cmd == "colors":
+        file = None
+        if args[:1] == ["--file"]:
+            file, args = Path(args[1]), args[2:]
+        file = file or (CURRENT / "theme/colors.toml")
+        if args == ["--raw"]:
+            raw: list = []
+            parse_colors(file, raw)
+            for k, v in raw:
+                print(f"{k}\t{v}")
+            return 0
+        c = resolve_colors(parse_colors(file), file.parent)
+        if args == ["--all"]:
+            for k in sorted(c, key=lambda s: s.encode()):
+                print(f"{k}\t{c[k]}")
+            return 0
+        key, fb = (args + [""])[:2]
+        v = c.get(key) or (c.get(fb) or fb if fb else "")
+        if not v:
+            return 1
+        print(v)
+        return 0
+
+    if cmd == "render":
+        colors_file = Path(args[args.index("--colors") + 1])
+        out = Path(args[args.index("--out") + 1])
+        dirs = [Path(a) for i, a in enumerate(args)
+                if not a.startswith("--") and args[i - 1] not in ("--colors", "--out")]
+        out.mkdir(parents=True, exist_ok=True)
+        c = resolve_colors(parse_colors(colors_file), colors_file.parent)
+        render_templates(c, dirs, out)
+        return 0
+
+    if cmd == "cosmic-ron":
+        colors_file = Path(args[args.index("--colors") + 1])
+        c = resolve_colors(parse_colors(colors_file), colors_file.parent)
+        sys.stdout.write(cosmic_theme_ron(c, slug(colors_file.parent.name)))
+        return 0
+
+    raise SystemExit(f"tos-theme: unknown command '{cmd}' (see --help)")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

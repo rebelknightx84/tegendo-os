@@ -1,0 +1,66 @@
+---
+- name: Agent config
+  ansible.builtin.template:
+    src: agent.conf.j2
+    dest: "{{ ansible_facts['env']['HOME'] }}/.config/tegendo-os/agent.conf"
+    mode: "0600"
+
+- name: Skill directories for agents
+  ansible.builtin.file:
+    path: "{{ ansible_facts['env']['HOME'] }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [.claude/skills, .agents/skills]
+
+- name: Link skills where agents look for them
+  ansible.builtin.file:
+    src: "/usr/share/tegendo-os/skills/{{ item.1 }}"
+    dest: "{{ ansible_facts['env']['HOME'] }}/{{ item.0 }}/{{ item.1 }}"
+    state: link
+    force: true
+  loop: "{{ ['.claude/skills', '.agents/skills'] | product(['tegendo-os', 'diagnose-crash']) | list }}"
+
+- name: Local Ollama (opt-in)
+  when: tos_ollama_local
+  become: true
+  block:
+    - name: Install ollama with CUDA
+      community.general.pacman:
+        name: ollama-cuda
+        state: present
+
+    - name: Start ollama (listens on localhost only by default)
+      ansible.builtin.systemd_service:
+        name: ollama
+        enabled: true
+        state: started
+
+- name: Crash watcher
+  when: tos_crash_watch
+  block:
+    - name: User unit directory
+      ansible.builtin.file:
+        path: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user"
+        state: directory
+        mode: "0755"
+
+    - name: Install crash watcher unit
+      ansible.builtin.copy:
+        src: "{{ tos_repo_dir }}/src/systemd/tos-crash-watch.service"
+        dest: "{{ ansible_facts['env']['HOME'] }}/.config/systemd/user/tos-crash-watch.service"
+        mode: "0644"
+
+    - name: Enable crash watcher
+      ansible.builtin.systemd_service:
+        name: tos-crash-watch
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Remind about agent CLI
+  ansible.builtin.debug:
+    msg: >-
+      Agent set to '{{ tos_agent }}'. If its CLI isn't installed yet, see
+      docs/AI.md. Try it with: tos doctor --collect-only (writes a redacted
+      report without sending anything).

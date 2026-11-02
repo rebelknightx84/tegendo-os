@@ -1,0 +1,62 @@
+# CI is where upstream code is allowed to run: Omarchy's renderer (for parity)
+# and libcosmic (to parse our COSMIC theme files). Neither ever runs on a
+# desktop. Merge an upstream sync only when every job is green.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Pin to a full commit SHA before relying on this (Dependabot keeps it fresh).
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: pip install --quiet ansible-core ansible-lint shellcheck-py
+      - name: shellcheck
+        run: shellcheck -x bootstrap.sh tools/*.sh tests/*.sh src/bin/tos src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent
+      - name: python
+        run: python3 -m py_compile src/bin/tos-theme
+      - name: ansible
+        run: |
+          cd ansible
+          ansible-playbook --syntax-check site.yml
+          ansible-lint site.yml
+
+  theme-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Omarchy at the pinned commit
+        run: |
+          commit=$(awk -F' = ' '$1=="commit"{print $2}' vendor/omarchy/UPSTREAM.lock)
+          git clone --quiet --filter=blob:none https://github.com/basecamp/omarchy.git "$RUNNER_TEMP/omarchy"
+          git -C "$RUNNER_TEMP/omarchy" checkout --quiet "$commit"
+      - name: Vendored data matches the pinned commit
+        run: |
+          src="$RUNNER_TEMP/omarchy"
+          diff -r "$src/themes" vendor/omarchy/themes
+          diff -r "$src/default/themed" vendor/omarchy/themed
+          diff "$src/default/agents/skills/diagnose-crash/SKILL.md" vendor/omarchy/skills/diagnose-crash/SKILL.md
+      - name: Renderer parity with upstream
+        run: OMARCHY_SRC="$RUNNER_TEMP/omarchy" tests/theme-parity.sh
+
+  cosmic-themes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate COSMIC theme files
+        run: |
+          mkdir -p "$RUNNER_TEMP/ron"
+          for t in vendor/omarchy/themes/*/; do
+            TOS_SHARE=src/share python3 src/bin/tos-theme cosmic-ron --colors "$t/colors.toml" \
+              > "$RUNNER_TEMP/ron/$(basename "$t").ron"
+          done
+      - name: Parse with libcosmic
+        run: cargo run --quiet --manifest-path tests/cosmic-ron-check/Cargo.toml -- "$RUNNER_TEMP"/ron/*.ron

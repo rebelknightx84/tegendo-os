@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# tos — tegendo-os command dispatcher
+#
+#   tos theme <list|current|set NAME>   themes (Omarchy-format, applied to COSMIC)
+#   tos doctor [question]               AI-assisted health check (asks before sending)
+#   tos doctor crash <pid>              AI-assisted crash diagnosis
+#   tos agent "prompt"                  start your agent (never auto-approve)
+#   tos update                          update packages (snap-pac snapshots around it)
+#   tos apply                           re-run the Ansible playbook from your repo
+#   tos status                          version, pinned upstream, health summary
+set -euo pipefail
+
+REPO=${TOS_REPO:-$HOME/tegendo-os}
+
+case "${1:-}" in
+  theme)  shift; exec tos-theme "$@" ;;
+  doctor) shift; exec tos-doctor "$@" ;;
+  agent)  shift; exec tos-agent "$@" ;;
+  update)
+    shift
+    if command -v paru >/dev/null; then
+      echo "Repo packages first, then AUR (paru shows each PKGBUILD diff before building)."
+      exec paru -Syu "$@"
+    fi
+    exec sudo pacman -Syu "$@"
+    ;;
+  apply)
+    shift
+    [[ -d $REPO/ansible ]] || { echo "No repo at $REPO (set TOS_REPO)"; exit 1; }
+    cd "$REPO/ansible"
+    exec ansible-playbook site.yml --ask-become-pass "$@"
+    ;;
+  status)
+    echo "tegendo-os $(cat /usr/share/tegendo-os/VERSION 2>/dev/null || echo '?')"
+    if [[ -f /usr/share/tegendo-os/UPSTREAM.lock ]]; then
+      awk -F' = ' '$1=="ref"||$1=="commit"{printf "omarchy %s: %s\n", $1, $2}' /usr/share/tegendo-os/UPSTREAM.lock
+    fi
+    echo "theme: $(tos-theme current)"
+    echo "agent: $(tos-agent --which)"
+    failed=$(systemctl --failed --no-legend --plain | wc -l)
+    echo "failed units: $failed"
+    systemctl --user is-active --quiet tos-crash-watch && echo "crash watch: on" || echo "crash watch: off"
+    ;;
+  ""|-h|--help) sed -n '2,10p' "$0" ;;
+  *) echo "tos: unknown command '$1'"; sed -n '2,10p' "$0"; exit 1 ;;
+esac

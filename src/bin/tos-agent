@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# =============================================================================
+# tos-agent — hand a task to your AI agent, never in auto-approve mode.
+#
+#   tos-agent "prompt"        start the configured agent with a prompt
+#   tos-agent --which         print the configured agent
+#
+# Config: ~/.config/tegendo-os/agent.conf (written by Ansible, edit freely)
+#   TOS_AGENT=claude|codex|ollama|custom
+#   TOS_AGENT_CMD=...           custom only; the prompt is appended as one arg
+#   TOS_OLLAMA_URL=http://stormbreaker:11434
+#   TOS_OLLAMA_MODEL=qwen3:14b
+#
+# Omarchy launches agents with --yolo / auto-approve so they act without
+# asking. This does the opposite: the agent proposes, you approve each action.
+# =============================================================================
+set -euo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/tegendo-os/agent.conf"
+TOS_AGENT=claude
+TOS_AGENT_CMD=""
+TOS_OLLAMA_URL="http://127.0.0.1:11434"
+TOS_OLLAMA_MODEL="qwen3:14b"
+# shellcheck source=/dev/null
+[[ -f $CONF ]] && source "$CONF"
+
+if [[ ${1:-} == --which ]]; then
+  echo "$TOS_AGENT"
+  exit 0
+fi
+
+prompt=${1:?usage: tos-agent "prompt"}
+workdir="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os/agent"
+mkdir -p "$workdir"
+cd "$workdir"
+
+case "$TOS_AGENT" in
+  claude)
+    command -v claude >/dev/null || { echo "Claude Code not installed (tos-agent: claude)"; exit 1; }
+    # default mode = asks before every command and every edit
+    exec claude --permission-mode default "$prompt"
+    ;;
+  codex)
+    command -v codex >/dev/null || { echo "Codex not installed (tos-agent: codex)"; exit 1; }
+    exec codex --ask-for-approval untrusted "$prompt"
+    ;;
+  ollama)
+    # Advisory only: the model reads, answers, and can't run anything.
+    command -v jq >/dev/null || { echo "jq is required"; exit 1; }
+    echo "Asking $TOS_OLLAMA_MODEL at $TOS_OLLAMA_URL (read-only advice)..."
+    jq -n --arg m "$TOS_OLLAMA_MODEL" --arg p "$prompt" \
+      '{model:$m, stream:false, messages:[{role:"user", content:$p}]}' |
+      curl -fsS --max-time 600 -H 'Content-Type: application/json' \
+        --data-binary @- "$TOS_OLLAMA_URL/api/chat" |
+      jq -r '.message.content'
+    ;;
+  custom)
+    [[ -n $TOS_AGENT_CMD ]] || { echo "Set TOS_AGENT_CMD in $CONF"; exit 1; }
+    read -ra cmd <<<"$TOS_AGENT_CMD"
+    exec "${cmd[@]}" "$prompt"
+    ;;
+  *)
+    echo "Unknown TOS_AGENT '$TOS_AGENT' in $CONF"; exit 1 ;;
+esac

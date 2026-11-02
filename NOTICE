@@ -1,0 +1,15 @@
+tegendo-os includes third-party material:
+
+vendor/omarchy/  (themes, templates, diagnose-crash skill)
+  From Omarchy — https://github.com/basecamp/omarchy
+  Copyright (c) David Heinemeier Hansson. MIT License: vendor/omarchy/LICENSE
+  Pinned commit: see vendor/omarchy/UPSTREAM.lock
+
+src/bin/tos-theme  (color resolver and template renderer)
+  A Python re-implementation of Omarchy's omarchy-theme-color and
+  omarchy-theme-set-templates behavior (MIT, as above).
+
+src/share/cosmic/dark.ron, src/share/cosmic/light.ron
+  Default COSMIC palettes from libcosmic — https://github.com/pop-os/libcosmic
+  Copyright System76. Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/).
+  These two files remain under MPL-2.0.

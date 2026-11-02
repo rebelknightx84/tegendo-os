@@ -1,0 +1,12 @@
+[package]
+name = "cosmic-ron-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Parses generated themes with COSMIC's real ThemeBuilder type — the same code
+# path `cosmic-settings appearance import` uses. Bump `rev` when CachyOS ships
+# a new COSMIC release.
+[dependencies]
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic", rev = "95236a9", default-features = false }
+ron = "0.11"

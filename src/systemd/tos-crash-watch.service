@@ -1,0 +1,18 @@
+[Unit]
+Description=tegendo-os crash watcher (offers AI diagnosis of your crashed apps)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/local/bin/tos-crash-watch
+Restart=on-failure
+RestartSec=5
+# Read-only helper: no new privileges, private /tmp, no writes outside config.
+# The "Diagnose" terminal is launched via systemd-run, so it is not confined.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=-%h/.config/tegendo-os
+
+[Install]
+WantedBy=graphical-session.target

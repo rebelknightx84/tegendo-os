@@ -1,0 +1,23 @@
+---
+# tegendo-os — CachyOS + COSMIC + a curated slice of Omarchy.
+#
+# Run as your normal user (not root):  ansible-playbook site.yml -K
+# Dry run first:                       ansible-playbook site.yml -K --check --diff
+- name: Tegendo-os
+  hosts: local
+  gather_facts: true
+  roles:
+    - role: preflight
+      tags: [always]
+    - role: base
+      tags: [base]
+    - role: security
+      tags: [security]
+    - role: nvidia
+      tags: [nvidia]
+    - role: desktop
+      tags: [desktop]
+    - role: themes
+      tags: [themes]
+    - role: ai
+      tags: [ai]

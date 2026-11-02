@@ -1,0 +1,44 @@
+---
+- name: Install themes, templates, COSMIC palettes and skills
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: u=rwX,go=rX
+  loop:
+    - { src: "{{ tos_repo_dir }}/vendor/omarchy/themes/", dest: /usr/share/tegendo-os/themes/ }
+    - { src: "{{ tos_repo_dir }}/vendor/omarchy/themed/", dest: /usr/share/tegendo-os/themed/ }
+    - { src: "{{ tos_repo_dir }}/vendor/omarchy/skills/", dest: /usr/share/tegendo-os/skills/ }
+    - { src: "{{ tos_repo_dir }}/vendor/omarchy/LICENSE", dest: /usr/share/tegendo-os/OMARCHY-LICENSE }
+    - { src: "{{ tos_repo_dir }}/vendor/omarchy/UPSTREAM.lock", dest: /usr/share/tegendo-os/UPSTREAM.lock }
+    - { src: "{{ tos_repo_dir }}/src/share/cosmic/", dest: /usr/share/tegendo-os/cosmic/ }
+    - { src: "{{ tos_repo_dir }}/src/skills/", dest: /usr/share/tegendo-os/skills/ }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: User theme directories
+  ansible.builtin.file:
+    path: "{{ ansible_facts['env']['HOME'] }}/.config/tegendo-os/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [themes, themed, hooks]
+
+- name: Check for an active theme
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['env']['HOME'] }}/.local/state/tegendo-os/current/theme.name"
+  register: tos_theme_name
+
+- name: Apply the default theme on first install
+  when: not tos_theme_name.stat.exists
+  block:
+    - name: Set theme
+      ansible.builtin.command:
+        argv: [/usr/local/bin/tos-theme, set, "{{ tos_default_theme }}"]
+      register: tos_theme_set
+      changed_when: true
+
+    - name: Theme result
+      ansible.builtin.debug:
+        var: tos_theme_set.stdout_lines

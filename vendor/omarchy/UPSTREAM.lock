@@ -1,0 +1,5 @@
+# Managed by tools/upstream-sync.sh — do not edit by hand.
+repo = https://github.com/basecamp/omarchy.git
+ref = v4.0.6
+commit = 237f1b4071a0bff2296c6d740ba2b9fd695ebfa0
+synced = 2026-11-02T19:04:11Z
