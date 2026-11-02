@@ -1,3 +1,4 @@
 tests/cosmic-ron-check/target/
 *.retry
 __pycache__/
+.DS_Store

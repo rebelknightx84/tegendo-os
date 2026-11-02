@@ -15,8 +15,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      # Pin to a full commit SHA before relying on this (Dependabot keeps it fresh).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tools
         run: pip install --quiet ansible-core ansible-lint shellcheck-py
       - name: shellcheck
@@ -32,7 +31,7 @@ jobs:
   theme-parity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch Omarchy at the pinned commit
         run: |
           commit=$(awk -F' = ' '$1=="commit"{print $2}' vendor/omarchy/UPSTREAM.lock)
@@ -50,7 +49,7 @@ jobs:
   cosmic-themes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate COSMIC theme files
         run: |
           mkdir -p "$RUNNER_TEMP/ron"

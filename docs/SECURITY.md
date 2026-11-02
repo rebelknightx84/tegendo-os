@@ -34,8 +34,8 @@
   ufw's rules. Bind to localhost (`-p 127.0.0.1:8080:80`) unless you mean to
   expose a port. Podman (rootless) doesn't have this problem.
 - **AUR = third-party code.** Read every PKGBUILD diff `paru` shows you.
-- **CI actions:** pin `actions/checkout` to a full commit SHA and let
-  Dependabot bump it.
+- **CI actions:** `actions/checkout` is pinned to a full commit SHA;
+  Dependabot (`.github/dependabot.yml`) opens weekly PRs to bump it.
 - **Your future package-signing key** (roadmap step 2): keep it on a YubiKey
   or offline, with a revocable CI subkey. Whoever holds it can push updates
   to every machine that trusts your repo.
