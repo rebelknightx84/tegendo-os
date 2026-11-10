@@ -1,5 +1,0 @@
----
-# Arch's `ansible` package already ships these; bootstrap.sh installs them
-# only when you're on bare ansible-core.
-collections:
-  - name: community.general

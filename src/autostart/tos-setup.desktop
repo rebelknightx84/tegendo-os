@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=tegendo-os setup
+Comment=Per-user setup after a tegendo-os image update (no-op otherwise)
+Exec=/usr/bin/tos-setup
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

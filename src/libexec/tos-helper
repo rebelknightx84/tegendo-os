@@ -3,95 +3,90 @@
 # tos-helper — the ONLY code Friday can run as root. Invoked via pkexec, so
 # polkit asks the person for their password every time (no caching).
 #
-#   tos-helper install <pkg>...      pacman -S --needed (official repos only)
-#   tos-helper update                pacman -Syu
+#   tos-helper update                bootc upgrade (staged; applies on reboot)
 #   tos-helper restart <unit>        systemctl restart (a few units refused)
 #   tos-helper nvidia-pm on|off      NVIDIA runtime power management
 #
-# Every action runs between a Snapper pre/post snapshot pair and is logged to
-# the journal (tag: tos-helper), where the AI can't edit it. The last line of
-# output is a JSON summary for tos-mcp. Arguments are re-validated here: the
-# caller is never trusted, even though tos-mcp validates too.
+# On tegendo-os (Fedora Atomic) the OS itself is an image: updates are staged
+# as a new deployment and the previous one stays bootable, so `tos undo`
+# (bootc rollback) is always available. /etc edits are backed up first.
+# Every action is logged to the journal (tag: tos-helper), out of the AI's
+# reach. The last line of output is a JSON summary for tos-mcp. Arguments are
+# re-validated here: the caller is never trusted.
 # =============================================================================
 set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+export PATH=/usr/sbin:/usr/bin
 export LC_ALL=C
 umask 022
 
 ACTION=${1:-}
 shift || true
 CALLER=${PKEXEC_UID:-unknown}
-PKG_RE='^[a-z0-9@._+][a-z0-9@._+-]{0,99}$'
 UNIT_RE='^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,127}\.(service|socket|timer|target|path|mount)$'
 # Restarting these logs you out or breaks authentication mid-session.
 REFUSED_UNITS=(systemd-logind.service display-manager.service cosmic-greeter.service
                dbus.service dbus-broker.service polkit.service systemd-journald.service)
 NVIDIA_CONF=/etc/modprobe.d/tos-nvidia-pm.conf
+BACKUP_DIR=/var/lib/tegendo-os/backup
 
-summary() {  # summary <rc> [pre] [post]
-  printf '{"action":"%s","rc":%d,"pre":%s,"post":%s}\n' "$ACTION" "$1" "${2:-null}" "${3:-null}"
+summary() {  # summary <rc> [staged-digest] [backup]
+  printf '{"action":"%s","rc":%d,"staged":%s,"backup":%s}\n' "$ACTION" "$1" \
+    "$( [[ -n ${2:-} ]] && printf '"%s"' "$2" || echo null)" \
+    "$( [[ -n ${3:-} ]] && printf '"%s"' "$3" || echo null)"
 }
 fail() { echo "tos-helper: $*" >&2; logger -t tos-helper "uid=$CALLER action=$ACTION refused: $*"; summary 2; exit 2; }
 
 [[ $EUID -eq 0 ]] || { echo "tos-helper: must run via pkexec" >&2; exit 1; }
 
 # ---- validate before touching anything ---------------------------------------
-desc=""
 case "$ACTION" in
-  install)
-    (( $# >= 1 && $# <= 10 )) || fail "install takes 1-10 packages"
-    for p in "$@"; do [[ $p =~ $PKG_RE ]] || fail "invalid package name"; done
-    desc="install $*"
-    ;;
   update)
     (( $# == 0 )) || fail "update takes no arguments"
-    desc="system update"
     ;;
   restart)
     (( $# == 1 )) || fail "restart takes one unit"
     [[ $1 =~ $UNIT_RE ]] || fail "invalid unit name"
     for u in "${REFUSED_UNITS[@]}"; do [[ $1 != "$u" ]] || fail "restarting $1 is not allowed from Friday"; done
-    desc="restart $1"
     ;;
   nvidia-pm)
     (( $# == 1 )) && [[ $1 == on || $1 == off ]] || fail "nvidia-pm takes on|off"
-    desc="nvidia runtime pm $1"
     ;;
   *) fail "unknown action '${ACTION}'" ;;
 esac
 
-snapper -c root get-config >/dev/null 2>&1 ||
-  fail "no Snapper 'root' config, so no safety snapshot is possible; refusing"
-
+[[ -e /run/ostree-booted ]] || fail "not an ostree/bootc system; refusing"
 logger -t tos-helper "uid=$CALLER action=$ACTION args=$* starting"
-pre=$(snapper -c root create --type pre --print-number --cleanup-algorithm number \
-        --description "friday: $desc" --userdata "tos=friday")
 
 # ---- act ----------------------------------------------------------------------
+staged="" backup=""
 set +e
 case "$ACTION" in
-  install) SNAP_PAC_SKIP=y pacman -S --needed --noconfirm -- "$@" ;;
-  update)  SNAP_PAC_SKIP=y pacman -Syu --noconfirm ;;
-  restart) systemctl restart -- "$1" && systemctl is-active -- "$1" ;;
+  update)
+    bootc upgrade
+    rc=$?
+    staged=$(bootc status --format=json 2>/dev/null | jq -r '.status.staged.image.imageDigest // empty')
+    [[ -n $staged ]] && echo "Update staged. Reboot to apply; the current system stays bootable."
+    [[ -z $staged && $rc -eq 0 ]] && echo "Already up to date."
+    ;;
+  restart)
+    systemctl restart -- "$1" && systemctl is-active -- "$1"
+    rc=$?
+    ;;
   nvidia-pm)
+    install -d -m700 "$BACKUP_DIR"
+    backup="$BACKUP_DIR/tos-nvidia-pm.conf.$(date +%Y%m%dT%H%M%S)"
+    if [[ -f $NVIDIA_CONF ]]; then cp -a -- "$NVIDIA_CONF" "$backup"; else : >"$backup.absent"; backup="$backup.absent"; fi
     if [[ $1 == on ]]; then
       printf '# Managed by tegendo-os (Friday). Lets the NVIDIA GPU power down when idle.\noptions nvidia NVreg_DynamicPowerManagement=0x02\n' >"$NVIDIA_CONF"
     else
       rm -f -- "$NVIDIA_CONF"
     fi
-    # Options for modules baked into the initramfs only apply after a rebuild.
-    if command -v mkinitcpio >/dev/null &&
-       grep -qsE '^[[:space:]]*MODULES=.*nvidia' /etc/mkinitcpio.conf /etc/mkinitcpio.conf.d/*.conf; then
-      mkinitcpio -P
-    fi
-    echo "Reboot to apply."
+    rc=$?
+    echo "Reboot to apply. Previous state saved to $backup."
     ;;
 esac
-rc=$?
 set -e
 
-post=$(snapper -c root create --type post --pre-number "$pre" --print-number --cleanup-algorithm number \
-         --description "friday: $desc (rc=$rc)" --userdata "tos=friday")
-logger -t tos-helper "uid=$CALLER action=$ACTION args=$* rc=$rc snapshots=$pre..$post"
-summary "$rc" "$pre" "$post"
+logger -t tos-helper "uid=$CALLER action=$ACTION args=$* rc=$rc staged=${staged:-none} backup=${backup:-none}"
+summary "$rc" "$staged" "$backup"
 exit "$rc"

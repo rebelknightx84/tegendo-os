@@ -1,0 +1,77 @@
+#!/usr/bin/bash
+# =============================================================================
+# tos-setup — per-user setup for tegendo-os. Runs automatically at login
+# (XDG autostart) and does real work only when the image version changed.
+# Safe to run by hand any time:  tos setup [--force]
+#
+# Everything system-wide lives in the image. This only touches your home:
+# config dirs, terminal + btop theme hooks, Friday's agent config and skills,
+# the Flathub user remote, the default theme, and Claude Code registration.
+# Existing files you edited are never overwritten.
+# =============================================================================
+set -uo pipefail
+
+SHARE=/usr/share/tegendo-os
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os"
+STAMP="$STATE/setup-version"
+VERSION=$(cat "$SHARE/VERSION" 2>/dev/null || echo dev)
+DEFAULT_THEME=${TOS_DEFAULT_THEME:-tokyo-night}
+
+if [[ ${1:-} != --force && -f $STAMP && $(cat "$STAMP") == "$VERSION" ]]; then
+  exit 0
+fi
+
+say() { echo "tos-setup: $*"; }
+mkdir -p "$CONF/tegendo-os"/{themes,themed,hooks} "$STATE"
+
+# Services started by systemd (crash watcher → diagnosis terminal) need the
+# session's display variables.
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP 2>/dev/null || true
+
+# ---- terminal & btop follow the active theme ------------------------------------
+mkdir -p "$CONF/kitty" "$CONF/btop"
+if ! grep -qs 'tegendo-os/current/theme/kitty.conf' "$CONF/kitty/kitty.conf"; then
+  cat >>"$CONF/kitty/kitty.conf" <<EOF
+
+# --- tegendo-os: colors follow the active theme (tos theme set ...) ---
+font_family JetBrains Mono
+window_padding_width 10
+globinclude $STATE/current/theme/kitty.conf
+EOF
+  say "kitty now follows the active theme"
+fi
+if ! grep -qs '^color_theme' "$CONF/btop/btop.conf"; then
+  echo "color_theme = \"$STATE/current/theme/btop.theme\"" >>"$CONF/btop/btop.conf"
+fi
+
+# ---- Friday ------------------------------------------------------------------------
+if [[ ! -f $CONF/tegendo-os/agent.conf ]]; then
+  install -m600 /dev/stdin "$CONF/tegendo-os/agent.conf" <<'EOF'
+# tegendo-os agent config (edit freely).
+# claude | codex | ollama | custom
+TOS_AGENT=claude
+TOS_AGENT_CMD=''
+TOS_OLLAMA_URL='http://127.0.0.1:11434'
+TOS_OLLAMA_MODEL='qwen3:14b'
+EOF
+fi
+for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+  mkdir -p "$d"
+  for s in tegendo-os diagnose-crash; do ln -sfn "$SHARE/skills/$s" "$d/$s"; done
+done
+if command -v claude >/dev/null && ! claude mcp get tegendo-os >/dev/null 2>&1; then
+  claude mcp add --scope user tegendo-os -- /usr/bin/tos-mcp >/dev/null 2>&1 &&
+    say "registered tos-mcp with Claude Code"
+fi
+
+# ---- Flatpak: Flathub for your user (apps install without root) ---------------------
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+
+# ---- default theme, once ----------------------------------------------------------------
+if [[ ! -f $STATE/current/theme.name ]] && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+  tos-theme set "$DEFAULT_THEME" >/dev/null && say "applied theme $DEFAULT_THEME"
+fi
+
+echo "$VERSION" >"$STAMP"
+say "done (tegendo-os $VERSION)"

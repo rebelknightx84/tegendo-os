@@ -1,0 +1,31 @@
+# System packages baked into the tegendo-os image. Official Fedora repos only:
+# no COPR, no third-party repos. One package per line; comments allowed.
+#
+# This is how system software gets added on tegendo-os: add a line here,
+# open a PR, let CI build, merge, then `tos update` on each machine.
+# (Desktop apps: Flatpak. Ubuntu-only or dev tools: Distrobox.)
+
+# --- Friday & tegendo-os tools ---------------------------------------------
+zenity                  # approval dialogs for tos-mcp
+jq
+libnotify               # notify-send (crash watcher)
+pciutils                # lspci (GPU detection)
+python3
+
+# --- terminal & everyday CLI -------------------------------------------------
+kitty                   # Ghostty isn't in Fedora's repos; Kitty is, and themes support it
+btop
+fzf
+eza
+bat
+ripgrep
+fd-find
+zoxide
+jetbrains-mono-fonts-all
+
+# --- containers & debugging --------------------------------------------------
+distrobox               # run Ubuntu/Debian-only apps in a container
+gdb                     # crash diagnosis (with debuginfod, preconfigured on Fedora)
+
+# --- networking --------------------------------------------------------------
+tailscale               # in Fedora's own repos since F41

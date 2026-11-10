@@ -1,6 +1,0 @@
----
-profile: production
-# All variables use the project-wide `tos_` prefix on purpose (they're shared
-# across roles via group_vars), rather than per-role prefixes.
-skip_list:
-  - var-naming[no-role-prefix]

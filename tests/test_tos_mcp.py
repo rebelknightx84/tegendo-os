@@ -48,8 +48,11 @@ class Harness:
         stub(self.bin, "zenity", log + 'case "$(cat %s/zenity.answer 2>/dev/null)" in approve) exit 0;; *) exit 1;; esac\n' % self.dir)
         stub(self.bin, "pkexec", log + 'case "$(cat %s/pkexec.mode 2>/dev/null)" in\n'
              '  cancel) echo "Error executing command as another user: Request dismissed" >&2; exit 126;;\n'
-             '  *) echo "pacman output line"; echo \'{"action":"install","rc":0,"pre":141,"post":142}\';;\n'
+             '  *) echo "Queued for next boot"; echo \'{"action":"update","rc":0,"staged":"sha256:abc123","backup":null}\';;\n'
              'esac\n' % self.dir)
+        stub(self.bin, "rpm-ostree", log + 'echo "AvailableUpdate: tegendo-os 45.20261111"\n')
+        stub(self.bin, "rpm", log + 'case "$2" in kitty) exit 0;; *) exit 1;; esac\n')
+        stub(self.bin, "flatpak", log + 'case "$1" in remote-info) exit 0;; install) echo "Installing $5";; esac\n')
         stub(self.bin, "tos-theme", log + 'case "$1" in list) printf "gruvbox\\ntokyo-night\\n";; current) echo tokyo-night;; set) echo "theme: $2";; esac\n')
         stub(self.bin, "journalctl", log + 'echo "Nov 10 sshd: login from 8.8.8.8 token=hunter2 ghp_ABCDEFGHIJKLMNOPQRSTUVWX1234 by joel@example.com"\n')
         stub(self.bin, "systemctl", log + 'echo "(stub systemctl)"\n')
@@ -121,7 +124,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_tool_list_shape(self):
         tools = self.h.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})[0]["result"]["tools"]
-        self.assertEqual(len(tools), 19)
+        self.assertEqual(len(tools), 21)
         for t in tools:
             self.assertRegex(t["description"], r"^\[(read|user|system)\] ")
             self.assertFalse(t["inputSchema"]["additionalProperties"])
@@ -129,7 +132,8 @@ class ProtocolTests(unittest.TestCase):
             if not t["description"].startswith("[read]"):
                 self.assertIn("reason", t["inputSchema"]["required"], t["name"])
         names = {t["name"] for t in tools}
-        for forbidden in ("shell", "exec", "run_command", "write_file", "delete_file", "snapshot_undo", "firewall"):
+        for forbidden in ("shell", "exec", "run_command", "write_file", "delete_file", "rollback", "undo",
+                          "firewall", "package_install", "layer", "rpm_ostree_install", "dnf"):
             self.assertFalse(any(forbidden in n for n in names), forbidden)
 
 
@@ -150,9 +154,13 @@ class ValidationTests(unittest.TestCase):
         self.assertRejected("system_status", {"extra": 1}, "Unknown arguments")
         self.assertRejected("service_status", {"unit": "--help.service"}, "invalid format")
         self.assertRejected("service_status", {"unit": "foo;rm -rf /.service"}, "invalid format")
-        self.assertRejected("package_install", {"packages": ["-Syu"], "reason": "x"}, "invalid item")
-        self.assertRejected("package_install", {"packages": [f"p{i}" for i in range(11)], "reason": "x"}, "number of items")
-        self.assertRejected("package_install", {"packages": ["vim"]}, "Missing required argument: reason")
+        self.assertRejected("request_system_package", {"packages": ["-y"], "reason": "x"}, "invalid item")
+        self.assertRejected("request_system_package", {"packages": [f"p{i}" for i in range(11)], "reason": "x"},
+                            "number of items")
+        self.assertRejected("request_system_package", {"packages": ["vim"]}, "Missing required argument: reason")
+        self.assertRejected("flatpak_install", {"app_id": "firefox", "reason": "x"}, "invalid format")
+        self.assertRejected("flatpak_install", {"app_id": "--system.evil.app", "reason": "x"}, "invalid format")
+        self.assertRejected("flatpak_search", {"query": "a;rm -rf"}, "invalid format")
         self.assertRejected("journal_errors", {"limit": 5000}, "out of range")
         self.assertRejected("nvidia_runtime_pm", {"enable": "yes", "reason": "x"}, "must be a boolean")
         self.assertRejected("theme_set", {"name": "no-such-theme", "reason": "x"}, "No theme named")
@@ -205,16 +213,37 @@ class TierTests(unittest.TestCase):
         self.assertTrue(r["isError"])
         self.assertEqual(self.h.calls_of("zenity"), [])
 
-    def test_system_tier_goes_through_polkit_with_snapshots(self):
+    def test_system_update_goes_through_polkit_and_stages(self):
         self.h.answer(zenity="approve", pkexec="ok")
-        r = self.h.call("package_install", {"packages": ["nvidia-prime"], "reason": "hybrid GPU"})
+        r = self.h.call("system_update", {"reason": "security updates"})
         self.assertFalse(r["isError"], text(r))
-        self.assertIn("tos undo 141", text(r))
+        self.assertIn("applies on reboot", text(r))
+        self.assertIn("tos undo", text(r))
         pk = self.h.calls_of("pkexec")
         self.assertEqual(len(pk), 1)
-        self.assertTrue(pk[0].endswith(f"{self.h.helper} install nvidia-prime"), pk[0])
+        self.assertTrue(pk[0].endswith(f"{self.h.helper} update"), pk[0])
+        self.assertIn("bootc upgrade", self.h.calls_of("zenity")[0])
         last = self.h.audit()[-1]
-        self.assertEqual((last["decision"], last["snapshot_pre"], last["snapshot_post"]), ("approved", 141, 142))
+        self.assertEqual((last["decision"], last["staged"]), ("approved", "sha256:abc123"))
+
+    def test_request_system_package_changes_nothing(self):
+        r = self.h.call("request_system_package", {"packages": ["kitty", "htop"], "reason": "x"})
+        self.assertFalse(r["isError"])
+        self.assertIn("image/packages.txt", text(r))
+        self.assertIn("  htop", text(r))
+        self.assertNotIn("  kitty", text(r))  # already installed
+        self.assertEqual(self.h.calls_of("zenity"), [])
+        self.assertEqual(self.h.calls_of("pkexec"), [])
+
+    def test_flatpak_install_is_user_scoped_and_gated(self):
+        self.h.answer(zenity="approve")
+        r = self.h.call("flatpak_install", {"app_id": "org.mozilla.firefox", "reason": "you asked"})
+        self.assertFalse(r["isError"], text(r))
+        installs = [c for c in self.h.calls_of("flatpak") if " install " in c]
+        self.assertEqual(len(installs), 1)
+        self.assertIn("install --user --noninteractive flathub org.mozilla.firefox", installs[0])
+        self.assertEqual(len(self.h.calls_of("zenity")), 1)
+        self.assertEqual(self.h.calls_of("pkexec"), [], "a user-scoped install never needs root")
 
     def test_system_tier_denied_never_reaches_polkit(self):
         self.h.answer(zenity="deny")
@@ -242,8 +271,8 @@ class HelperTests(unittest.TestCase):
                               env={"PATH": "/usr/bin:/bin", "PKEXEC_UID": "1000"})
 
     def test_refusals(self):
-        for args, why in [(("install", "--root=/tmp"), "invalid package"),
-                          (("install",), "1-10 packages"),
+        for args, why in [(("install", "vim"), "unknown action"),   # no live package installs
+                          (("update", "--apply"), "no arguments"),
                           (("restart", "dbus.service"), "not allowed"),
                           (("restart", "-x.service"), "invalid unit"),
                           (("nvidia-pm", "maybe"), "on|off"),
@@ -253,12 +282,12 @@ class HelperTests(unittest.TestCase):
             self.assertIn(why, p.stderr)
             self.assertEqual(json.loads(p.stdout.splitlines()[-1])["rc"], 2)
 
-    def test_refuses_without_snapper(self):
-        if subprocess.run(["sh", "-c", "snapper -c root get-config"], capture_output=True).returncode == 0:
-            self.skipTest("this machine has a real Snapper config")
-        p = self.helper("install", "vim")
+    def test_refuses_off_ostree(self):
+        if os.path.exists("/run/ostree-booted"):
+            self.skipTest("this is a real ostree system")
+        p = self.helper("update")
         self.assertEqual(p.returncode, 2)
-        self.assertIn("no safety snapshot", p.stderr)
+        self.assertIn("not an ostree/bootc system", p.stderr)
 
 
 try:
@@ -298,7 +327,7 @@ class SDKConformanceTests(unittest.TestCase):
 
         version, tools, status, bad = asyncio.run(go())
         self.assertEqual(version, "2025-11-25")
-        self.assertEqual(len(tools.tools), 19)
+        self.assertEqual(len(tools.tools), 21)
         self.assertFalse(status.is_error)
         self.assertIn("kernel:", status.content[0].text)
         self.assertTrue(bad.is_error)

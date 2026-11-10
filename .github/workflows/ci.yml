@@ -17,18 +17,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tools
-        run: |
-          pip install --quiet ansible-core ansible-lint shellcheck-py
-          ansible-galaxy collection install -r ansible/requirements.yml
+        run: pip install --quiet shellcheck-py
       - name: shellcheck
-        run: shellcheck -x bootstrap.sh tools/*.sh tests/*.sh src/bin/tos src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent
+        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper
       - name: python
-        run: python3 -m py_compile src/bin/tos-theme
-      - name: ansible
+        run: python3 -m py_compile src/bin/tos-theme src/bin/tos-mcp src/lib/tos_redact.py
+      - name: XML (polkit policy, firewalld zone)
+        run: python3 -c 'import sys, xml.dom.minidom as m; [m.parse(f) for f in sys.argv[1:]]' src/polkit/*.policy image/system/*.xml
+      - name: packages.txt is official-repo names only
         run: |
-          cd ansible
-          ansible-playbook --syntax-check site.yml
-          ansible-lint site.yml
+          ! sed -e 's/#.*//' image/packages.txt | grep -vE '^[[:space:]]*$' | grep -vE '^[A-Za-z0-9@._+-]+[[:space:]]*$'
+
+  friday:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Official MCP SDK (test client only; tos-mcp itself has no dependencies)
+        run: pip install --quiet mcp
+      - name: tos-mcp tests, incl. a real MCP client over stdio
+        run: python3 -m unittest tests/test_tos_mcp.py -v
+      - name: Root-helper refusal tests (stop before changing anything)
+        run: sudo python3 -m unittest tests.test_tos_mcp.HelperTests -v
 
   theme-parity:
     runs-on: ubuntu-latest

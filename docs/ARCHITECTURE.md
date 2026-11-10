@@ -6,9 +6,9 @@
 ┌───────────────────────────────────────────────────────────────┐
 │ tegendo-os layer   tos tools · themes · AI doctor · hardening │  ← this repo
 ├───────────────────────────────────────────────────────────────┤
-│ COSMIC desktop     cosmic-comp, cosmic-settings, cosmic-bg    │  ← Arch/CachyOS packages
+│ COSMIC desktop     cosmic-comp, cosmic-settings, cosmic-bg    │  ← Fedora packages
 ├───────────────────────────────────────────────────────────────┤
-│ CachyOS            optimized kernels & packages, chwd, Limine │  ← CachyOS repos
+│ Fedora Atomic      bootc/ostree, SELinux, signed kernel       │  ← Fedora COSMIC Atomic image
 └───────────────────────────────────────────────────────────────┘
           Omarchy contributes DATA ONLY → vendor/omarchy/ (pinned)
 ```
@@ -20,10 +20,10 @@ through a commit you made.**
 
 | Source | What we take | How it's trusted |
 |---|---|---|
-| CachyOS / Arch repos | all packages | signed repos, unchanged `pacman.conf` |
+| Fedora COSMIC Atomic image + Fedora repos | the base OS and every package | Fedora-signed packages; our image is built in CI and Sigstore-signed |
 | Omarchy | themes, `.tpl` templates, diagnose-crash skill (markdown) | pinned to a full commit SHA, allowlisted paths, no executables/symlinks, reviewed in a PR, parity-tested in CI |
 | libcosmic | two palette files (data) | copied once, versioned in git |
-| AUR | only what you choose | `paru` shows each PKGBUILD diff before building |
+| Flathub | desktop apps you choose | per-user Flatpaks, sandboxed; Friday installs only with your click |
 
 Omarchy's theme engine is shell scripts. Rather than run them, `tos-theme`
 re-implements the color resolver and template renderer in Python, and
@@ -39,12 +39,12 @@ tos theme set tokyo-night
   3. render  templates: ~/.config/tegendo-os/themed → themed-extra → vendored Omarchy
   4. bridge  cosmic-theme.ron (COSMIC ThemeBuilder) + wallpaper entry
   5. swap    atomically into ~/.local/state/tegendo-os/current/theme
-  6. apply   cosmic-settings appearance import · cosmic-bg config · reload ghostty/kitty
+  6. apply   cosmic-settings appearance import · cosmic-bg config · reload kitty
              · run ~/.config/tegendo-os/hooks/theme-set if present
 ```
 
 Apps point at `~/.local/state/tegendo-os/current/theme/<file>` once (the
-desktop role does this for Ghostty and btop), so later theme changes need no
+first-login setup does this for Kitty and btop), so later theme changes need no
 config edits.
 
 **COSMIC mapping:** `background` → bg, `foreground` → text tint, `accent` →

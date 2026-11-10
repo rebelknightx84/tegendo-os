@@ -1,0 +1,32 @@
+# =============================================================================
+# tegendo-os — Fedora COSMIC Atomic + the tegendo-os layer, as one bootc image.
+#
+# Built, signed and published by CI (.github/workflows/image.yml). A Fedora
+# COSMIC Atomic machine moves onto it with:
+#     sudo bootc switch ghcr.io/<owner>/tegendo-os:45
+# and from then on updates atomically with `tos update` (rollback: `tos undo`).
+#
+# Local build (from the repo root):
+#     podman build -f image/Containerfile -t tegendo-os:dev .
+# =============================================================================
+ARG FEDORA_VERSION=45
+ARG BASE_IMAGE=quay.io/fedora-ostree-desktops/cosmic-atomic
+
+FROM ${BASE_IMAGE}:${FEDORA_VERSION}
+
+ARG FEDORA_VERSION
+ARG TOS_VERSION=0.3.0
+LABEL org.opencontainers.image.title="tegendo-os" \
+      org.opencontainers.image.description="Fedora COSMIC Atomic with Friday, themes and hardening" \
+      org.opencontainers.image.version="${TOS_VERSION}" \
+      org.opencontainers.image.licenses="NOASSERTION" \
+      containers.bootc="1"
+
+# Everything happens in one script so the layer stays small and auditable.
+# The repo is bind-mounted read-only; nothing from it lands in the image
+# except what build.sh copies on purpose.
+RUN --mount=type=bind,source=.,target=/ctx,ro \
+    TOS_VERSION="${TOS_VERSION}" FEDORA_VERSION="${FEDORA_VERSION}" /ctx/image/build.sh
+
+# bootc's own checks: the image must be a valid, bootable bootc image.
+RUN bootc container lint

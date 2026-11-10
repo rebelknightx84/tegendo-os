@@ -4,10 +4,10 @@ Friday is Claude (or a local model) connected to the OS through **tos-mcp**,
 an MCP server. Any MCP client can use it; Claude Code is the default.
 
 ```bash
-claude mcp add --scope user tegendo-os -- tos-mcp   # done by `tos apply` if Claude Code is installed
+claude mcp add --scope user tegendo-os -- tos-mcp   # done by `tos setup` if Claude Code is installed
 tos-mcp --list-tools                                # what Friday can do
 tos friday-log                                      # what Friday did
-tos undo <snapshot>                                 # revert a Friday change (only you can)
+tos undo                                            # boot the previous OS image (only you can)
 ```
 
 ## Permission tiers, enforced by the OS
@@ -18,10 +18,10 @@ tos-mcp enforces its own gates, outside the model's reach:
 
 | Tier | Tools | Gate |
 |---|---|---|
-| **read** | system_status, journal_errors, service_status, failed_units, recent_crashes, package_info, pending_updates, snapshots, gpu_status, disk_usage, network_status, theme_list, activity_log | automatic; all output redacted |
-| **user** | theme_set, user_service_restart | native dialog (zenity) showing the exact change; denies with no screen session |
-| **system** | package_install, system_update, service_restart, nvidia_runtime_pm | dialog, then polkit password (every time, `auth_admin`), run by `tos-helper` between Snapper pre/post snapshots |
-| **never** | shell, file writes or deletes, disks, firewall, users/sudo, pacman.conf, snapshot rollback | no tool exists |
+| **read** | system_status, journal_errors, service_status, failed_units, recent_crashes, package_info, pending_updates, deployments, flatpak_search, request_system_package, gpu_status, disk_usage, network_status, theme_list, activity_log | automatic; all output redacted (`request_system_package` only explains, never changes) |
+| **user** | theme_set, user_service_restart, flatpak_install (your user only, Flathub) | native dialog (zenity) showing the exact change; denies with no screen session |
+| **system** | system_update, service_restart, nvidia_runtime_pm | dialog, then polkit password (every time, `auth_admin`), run by `tos-helper`; OS updates are staged images (old one stays bootable), `/etc` edits are backed up |
+| **never** | shell, file writes or deletes, disks, firewall, users/sudo, rollback, live package installs (`rpm-ostree install`/`dnf`) | no tool exists |
 
 Details that matter:
 
@@ -32,10 +32,12 @@ Details that matter:
 - **No screen, no change.** Without a graphical session, user and system tools deny.
 - **Inputs are validated twice**, by tos-mcp and again by the root helper,
   which trusts nothing from its caller. Unit names can't start with `-`;
-  package names are strict; at most 10 packages per install; repos only, no AUR.
+  package names and Flatpak IDs are strict; system packages can only be *requested*
+  (`request_system_package` tells you what to add to `image/packages.txt`).
 - **Footgun units are refused**: logind, the display manager, dbus, polkit, journald.
-- **No snapshot, no change.** The helper refuses system changes when Snapper
-  has no `root` config.
+- **Atomic or nothing.** The helper refuses to run on anything but an ostree/bootc
+  system, and OS updates are only ever *staged*: you choose when to reboot,
+  and the previous image stays one `tos undo` away.
 - **Two audit trails.** `~/.local/state/tegendo-os/friday/audit.jsonl` (0600,
   every call and decision) and the journal (`journalctl -t tos-helper`, root
   actions, out of the AI's reach). Both are ready for Wazuh.
