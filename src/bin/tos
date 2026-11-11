@@ -8,6 +8,8 @@
 #   tos update                          update packages (snap-pac snapshots around it)
 #   tos apply                           re-run the Ansible playbook from your repo
 #   tos status                          version, pinned upstream, health summary
+#   tos undo <snapshot>                 revert a Friday change (you only; Friday can't)
+#   tos friday-log [n]                  what Friday did recently
 set -euo pipefail
 
 REPO=${TOS_REPO:-$HOME/tegendo-os}
@@ -41,6 +43,27 @@ case "${1:-}" in
     echo "failed units: $failed"
     systemctl --user is-active --quiet tos-crash-watch && echo "crash watch: on" || echo "crash watch: off"
     ;;
-  ""|-h|--help) sed -n '2,10p' "$0" ;;
-  *) echo "tos: unknown command '$1'"; sed -n '2,10p' "$0"; exit 1 ;;
+  undo)
+    pre=${2:?usage: tos undo <snapshot-number>  (the number Friday reported)}
+    [[ $pre =~ ^[0-9]+$ ]] || { echo "Not a snapshot number: $pre"; exit 1; }
+    post=$(sudo snapper --csvout -c root list --columns number,pre-number |
+             awk -F, -v p="$pre" '$2 == p { print $1 }' | tail -n 1)
+    [[ -n $post ]] || { echo "No 'post' snapshot is paired with $pre (see: sudo snapper -c root list)"; exit 1; }
+    echo "Files changed between snapshots $pre and $post:"
+    sudo snapper -c root status "$pre..$post" | head -n 40
+    echo
+    echo "Reverting restores these files to snapshot $pre. Packages and kernel modules"
+    echo "take full effect after a reboot. For a whole-system rollback, boot the snapshot instead."
+    read -rp "Revert these changes? [y/N] " ok
+    [[ $ok =~ ^[Yy]$ ]] || { echo "Nothing changed."; exit 0; }
+    exec sudo snapper -c root undochange "$pre..$post"
+    ;;
+  friday-log)
+    log="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os/friday/audit.jsonl"
+    [[ -f $log ]] || { echo "No Friday activity yet."; exit 0; }
+    tail -n "${2:-20}" "$log" |
+      jq -r '[.ts[11:16], .tier, .tool, .decision, (if .snapshot_pre then "snap \(.snapshot_pre)" else "" end)] | @tsv'
+    ;;
+  ""|-h|--help) sed -n '2,12p' "$0" ;;
+  *) echo "tos: unknown command '$1'"; sed -n '2,12p' "$0"; exit 1 ;;
 esac

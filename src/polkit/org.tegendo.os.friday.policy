@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Managed by tegendo-os. Friday's system changes go through tos-helper,
+     and this policy makes polkit ask for your password EVERY time
+     (auth_admin, not auth_admin_keep) and refuse outside your active session. -->
+<policyconfig>
+  <vendor>tegendo-os</vendor>
+  <action id="org.tegendo.os.friday.helper">
+    <description>Let Friday make a system change</description>
+    <message>Friday wants to make a system change. Enter your password to approve it once.</message>
+    <icon_name>security-high</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/tegendo-os/tos-helper</annotate>
+  </action>
+</policyconfig>

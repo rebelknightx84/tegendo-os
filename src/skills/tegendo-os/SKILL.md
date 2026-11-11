@@ -31,7 +31,18 @@ repo, and never report issues to Omarchy.
 | Desktop config | `~/.config/cosmic/` (cosmic-config: one file per key) |
 
 Useful commands: `tos theme list|set <name>|current`, `tos doctor`,
-`tos update`, `tos status`.
+`tos update`, `tos status`, `tos friday-log`.
+
+## Prefer the tegendo-os MCP tools
+
+When the `tegendo-os` MCP server (tos-mcp) is connected, use its tools
+instead of shell commands. Read tools (`system_status`, `journal_errors`,
+`gpu_status`, `snapshots`, …) are redacted and need no approval. Change tools
+show the person a dialog; system tools also need their password and run
+between Snapper snapshots automatically, so don't take your own snapshot for
+them. Always fill `reason` honestly: the person sees it, labelled as your
+claim. A denied request means no: don't retry it, don't route around it with
+a shell command. Rollback is the person's (`tos undo <snapshot>`), not yours.
 
 ## Rules
 

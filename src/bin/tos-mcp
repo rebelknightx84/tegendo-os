@@ -1,0 +1,583 @@
+#!/usr/bin/python3 -I
+"""tos-mcp — the connector between Friday (any MCP client) and tegendo-os.
+
+An MCP server over stdio, standard library only. It exposes the OS as tools in
+four tiers, and the tiers are enforced HERE, by the OS, not by the AI client:
+
+  read    automatic       status, logs, packages, snapshots, GPU — all redacted
+  user    ask first       a desktop dialog shows the exact change; you click
+  system  ask + password  same dialog, then polkit asks for your password; a
+                          root helper with a fixed command list does the work
+                          between Snapper pre/post snapshots
+  never   not exposed     no shell, no file writes/deletes, no disks, no
+                          firewall changes, no snapshot rollback
+
+Every call is appended to ~/.local/state/tegendo-os/friday/audit.jsonl (0600);
+system actions are also logged to the journal by the root helper.
+
+Register with Claude Code:  claude mcp add --scope user tegendo-os -- tos-mcp
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+for _candidate in (os.environ.get("TOS_LIB", ""), HERE.parent / "lib" / "tegendo-os", HERE.parent / "lib"):
+    if _candidate and (Path(_candidate) / "tos_redact.py").is_file():
+        sys.path.insert(0, str(_candidate))
+        break
+from tos_redact import redact  # noqa: E402
+
+VERSION = "0.2.0"
+HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
+HELPER = os.environ.get("TOS_HELPER", "/usr/local/lib/tegendo-os/tos-helper")
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "tegendo-os" / "friday"
+AUDIT = STATE / "audit.jsonl"
+CONFIRM_TIMEOUT = int(os.environ.get("TOS_CONFIRM_TIMEOUT", "120"))
+DENY_COOLDOWN = 60  # seconds: a denied request can't re-prompt you right away
+
+# First character alphanumeric so nothing can be read as a command-line option.
+UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,127}\.(service|socket|timer|target|path|mount)$")
+PKG_RE = re.compile(r"^[a-z0-9@._+][a-z0-9@._+-]{0,99}$")
+THEME_RE = re.compile(r"^[a-z0-9][a-z0-9 _-]{0,63}$", re.I)
+
+INSTRUCTIONS = """\
+You are connected to tegendo-os (CachyOS + COSMIC). Tools are tiered:
+read tools run immediately; 'user' tools show the person a dialog and wait;
+'system' tools also need their password and are wrapped in Snapper snapshots.
+Investigate with read tools before proposing a change. Give a short, honest
+`reason` on every change: the person sees it, labelled as your claim. If a
+change is denied, do not retry it; explain alternatives instead. There is no
+tool for shell access, deleting files, disks, firewall changes or rollback —
+those stay with the person (rollback: `tos undo <snapshot>`)."""
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def log(msg: str) -> None:
+    print(f"tos-mcp: {msg}", file=sys.stderr, flush=True)
+
+
+def run(argv: list[str], timeout: int = 20) -> tuple[int, str]:
+    """Run a command (never through a shell). Returns (rc, combined output)."""
+    if not shutil.which(argv[0]) and not os.path.isabs(argv[0]):
+        return 127, f"({argv[0]} is not installed)"
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                           env={**os.environ, "LC_ALL": "C", "SYSTEMD_PAGER": "", "PAGER": "cat"})
+    except subprocess.TimeoutExpired:
+        return 124, f"({argv[0]} timed out after {timeout}s)"
+    except OSError as e:
+        return 126, f"({argv[0]} failed: {e})"
+    return p.returncode, (p.stdout + (("\n" + p.stderr) if p.stderr.strip() else "")).strip()
+
+
+def clip(text: str, lines: int = 200) -> str:
+    rows = text.splitlines()
+    return "\n".join(rows[:lines]) + (f"\n… ({len(rows) - lines} more lines)" if len(rows) > lines else "")
+
+
+def audit(entry: dict) -> None:
+    try:
+        STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(AUDIT, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as f:
+            f.write(json.dumps({"ts": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                                **entry}) + "\n")
+    except OSError as e:
+        log(f"audit write failed: {e}")
+
+
+def read_file(path: str) -> str:
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return ""
+
+
+class ToolError(Exception):
+    """A failure to report to the client as an isError result."""
+
+
+# ---------------------------------------------------------------------------
+# approval: OS-level, outside the AI client's control
+# ---------------------------------------------------------------------------
+
+_recent_denials: dict[str, float] = {}
+
+
+def _has_display() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def confirm(title: str, change: str, reason: str, tier: str) -> bool:
+    """Show a native dialog. True only if the person clicks Approve in time."""
+    gate = "You'll be asked for your password next." if tier == "system" else "Your settings only."
+    body = (f"{change}\n\n{gate}\n\n"
+            f"Friday's reason (its own claim, not verified):\n{reason or '(none given)'}")
+    if not _has_display():
+        log("no graphical session: denying (approval needs a person at the screen)")
+        return False
+    if shutil.which("zenity"):
+        rc, _ = run(["zenity", "--question", "--no-markup", "--title", title, "--text", body,
+                     "--ok-label", "Approve once", "--cancel-label", "Deny", "--width", "560",
+                     "--timeout", str(CONFIRM_TIMEOUT)], timeout=CONFIRM_TIMEOUT + 10)
+        return rc == 0
+    if shutil.which("notify-send"):
+        rc, out = run(["notify-send", "--app-name=Friday", "--urgency=critical", "--wait",
+                       "--action=approve=Approve once", "--action=deny=Deny",
+                       title, body], timeout=CONFIRM_TIMEOUT)
+        return rc == 0 and out.strip().splitlines()[-1:] == ["approve"]
+    log("no dialog tool (zenity or notify-send): denying")
+    return False
+
+
+def gated(tool: str, args: dict, tier: str, title: str, change: str) -> None:
+    """Raise ToolError unless the person approves. Throttles repeat prompts."""
+    key = tool + json.dumps(args, sort_keys=True)
+    last = _recent_denials.get(key)
+    if last and time.monotonic() - last < DENY_COOLDOWN:
+        audit({"tool": tool, "tier": tier, "args": args, "decision": "throttled"})
+        raise ToolError("The person denied this exact request moments ago. Do not ask again; "
+                        "explain the situation or offer an alternative.")
+    if not confirm(title, change, str(args.get("reason", ""))[:500], tier):
+        _recent_denials[key] = time.monotonic()
+        audit({"tool": tool, "tier": tier, "args": args, "decision": "denied"})
+        raise ToolError("Denied by the person (or the approval dialog timed out). Do not retry.")
+
+
+def run_helper(*helper_args: str) -> dict:
+    """Run the root helper through polkit. Returns its JSON summary."""
+    if not Path(HELPER).is_file():
+        raise ToolError(f"Root helper not installed at {HELPER}. Run `tos apply`.")
+    rc, out = run(["pkexec", HELPER, *helper_args], timeout=1800)
+    summary: dict = {}
+    for line in reversed(out.splitlines()):
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                summary = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                pass
+    if not summary and rc in (126, 127):
+        # pkexec: 126 = password dialog dismissed / not authorized, 127 = not available
+        audit({"tool": helper_args[0], "tier": "system", "decision": "password-cancelled", "rc": rc})
+        raise ToolError("The password prompt was cancelled (or polkit isn't available). Nothing changed.")
+    summary.setdefault("rc", rc)
+    summary["output"] = clip(redact(out), 80)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# read tools
+# ---------------------------------------------------------------------------
+
+def t_system_status(_: dict) -> str:
+    osr = dict(re.findall(r'^(\w+)="?([^"\n]*)"?$', read_file("/etc/os-release"), re.M))
+    up = float((read_file("/proc/uptime") or "0").split()[0])
+    mem = dict(re.findall(r"^(\w+):\s+(\d+)", read_file("/proc/meminfo"), re.M))
+    lines = [
+        f"os: {osr.get('PRETTY_NAME', '?')}",
+        f"kernel: {os.uname().release}",
+        f"uptime: {int(up // 3600)}h {int(up % 3600 // 60)}m",
+        f"load: {read_file('/proc/loadavg')[:14]}",
+        f"memory: {int(mem.get('MemAvailable', 0)) // 1024} MiB free of {int(mem.get('MemTotal', 0)) // 1024} MiB",
+        f"tegendo-os: {read_file('/usr/share/tegendo-os/VERSION') or '?'}",
+        f"theme: {read_file(str(Path.home() / '.local/state/tegendo-os/current/theme.name')) or '(none)'}",
+    ]
+    for mount in ("/", "/home"):
+        try:
+            u = shutil.disk_usage(mount)
+            lines.append(f"disk {mount}: {u.free // 2**30} GiB free of {u.total // 2**30} GiB")
+        except OSError:
+            pass
+    for bat in sorted(Path("/sys/class/power_supply").glob("BAT*")):
+        lines.append(f"battery {bat.name}: {read_file(str(bat / 'capacity'))}% {read_file(str(bat / 'status'))}")
+    for scope in ([], ["--user"]):
+        _, out = run(["systemctl", *scope, "--failed", "--no-legend", "--plain"])
+        n = len([ln for ln in out.splitlines() if ln.strip() and not ln.startswith("(")])
+        lines.append(f"failed {'user' if scope else 'system'} units: {n}")
+    return "\n".join(lines)
+
+
+def t_journal_errors(a: dict) -> str:
+    since = {"boot": None, "1h": "-1h", "24h": "-24h"}[a.get("since", "boot")]
+    argv = ["journalctl", "--no-pager", "-o", "short-iso", "-p", a.get("priority", "err"),
+            "-n", str(a.get("limit", 80))]
+    argv += ["--since", since] if since else ["-b"]
+    if a.get("unit"):
+        argv += ["-u", a["unit"]]
+    _, out = run(argv, timeout=30)
+    return out or "(no matching entries)"
+
+
+def t_service_status(a: dict) -> str:
+    scope = ["--user"] if a.get("scope") == "user" else []
+    _, out = run(["systemctl", *scope, "status", "--no-pager", "-n", "20", a["unit"]])
+    return out
+
+
+def t_failed_units(_: dict) -> str:
+    _, sysf = run(["systemctl", "--failed", "--no-legend", "--plain"])
+    _, usrf = run(["systemctl", "--user", "--failed", "--no-legend", "--plain"])
+    return f"system:\n{sysf or '(none)'}\n\nuser:\n{usrf or '(none)'}"
+
+
+def t_recent_crashes(a: dict) -> str:
+    _, out = run(["coredumpctl", "list", "--no-pager", f"--since=-{a.get('days', 7)}d"])
+    return out or "(no core dumps)"
+
+
+def t_package_info(a: dict) -> str:
+    rc, out = run(["pacman", "-Qi", a["name"]])
+    if rc != 0:
+        rc, out = run(["pacman", "-Si", a["name"]])
+        out = "(not installed — repository info:)\n" + out if rc == 0 else f"(no package named {a['name']})"
+    return out
+
+
+def t_pending_updates(_: dict) -> str:
+    rc, out = run(["checkupdates"], timeout=90)
+    if rc == 2:
+        return "(no updates pending)"
+    return out
+
+
+def t_snapshots(a: dict) -> str:
+    _, out = run(["snapper", "-c", "root", "list"])
+    rows = out.splitlines()
+    return "\n".join(rows[:2] + rows[2:][-a.get("limit", 15):]) if len(rows) > 2 else out
+
+
+def t_gpu_status(_: dict) -> str:
+    parts = []
+    for dev in sorted(Path("/sys/bus/pci/devices").glob("*")):
+        if not read_file(str(dev / "class")).startswith("0x03"):
+            continue
+        vendor = {"0x10de": "NVIDIA", "0x1002": "AMD", "0x8086": "Intel"}.get(read_file(str(dev / "vendor")), "?")
+        driver = Path(os.readlink(dev / "driver")).name if (dev / "driver").exists() else "(none)"
+        parts.append(f"{dev.name} {vendor}: driver={driver} power_state={read_file(str(dev / 'power_state')) or '?'} "
+                     f"runtime={read_file(str(dev / 'power/runtime_status')) or '?'} "
+                     f"control={read_file(str(dev / 'power/control')) or '?'}")
+    _, smi = run(["nvidia-smi", "--query-gpu=name,driver_version,pstate,power.draw,temperature.gpu",
+                  "--format=csv,noheader"])
+    pm = [ln for f in Path("/etc/modprobe.d").glob("*.conf") for ln in read_file(str(f)).splitlines()
+          if "NVreg_DynamicPowerManagement" in ln] if Path("/etc/modprobe.d").is_dir() else []
+    parts += [f"nvidia-smi: {smi}", f"modprobe NVreg_DynamicPowerManagement: {pm or '(driver default)'}"]
+    return "\n".join(parts) if parts else "(no GPUs found)"
+
+
+def t_disk_usage(_: dict) -> str:
+    _, df = run(["df", "-h", "-x", "tmpfs", "-x", "devtmpfs", "-x", "efivarfs"])
+    _, du = run(["du", "-x", "-h", "-d", "1", str(Path.home())], timeout=30)
+    top = sorted(du.splitlines(), key=lambda s: _size_key(s.split("\t")[0]), reverse=True)[:12]
+    return f"{df}\n\nlargest folders in your home:\n" + "\n".join(top)
+
+
+def _size_key(s: str) -> float:
+    m = re.match(r"([\d.]+)([KMGT]?)", s)
+    return float(m.group(1)) * {"": 1, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}[m.group(2)] if m else 0
+
+
+def t_network_status(_: dict) -> str:
+    _, ip = run(["ip", "-br", "addr"])
+    _, nm = run(["nmcli", "-t", "-f", "STATE,CONNECTIVITY,WIFI", "general"])
+    _, ts = run(["tailscale", "status", "--self=true", "--peers=false"])
+    return f"interfaces:\n{ip}\n\nnetworkmanager: {nm}\n\ntailscale:\n{ts}"
+
+
+def t_theme_list(_: dict) -> str:
+    _, themes = run(["tos-theme", "list"])
+    _, cur = run(["tos-theme", "current"])
+    return f"current: {cur}\navailable:\n{themes}"
+
+
+def t_activity_log(a: dict) -> str:
+    rows = read_file(str(AUDIT)).splitlines()[-a.get("limit", 20):]
+    return "\n".join(rows) or "(no activity yet)"
+
+
+# ---------------------------------------------------------------------------
+# user-tier tools (dialog)
+# ---------------------------------------------------------------------------
+
+def t_theme_set(a: dict) -> str:
+    _, themes = run(["tos-theme", "list"])
+    if a["name"].lower().replace(" ", "-") not in themes.split():
+        raise ToolError(f"No theme named '{a['name']}'. Use theme_list.")
+    gated("theme_set", a, "user", "Friday wants to change your theme",
+          f"Apply theme: {a['name']}\n(desktop colors, wallpaper, terminal)")
+    rc, out = run(["tos-theme", "set", a["name"]], timeout=60)
+    if rc:
+        raise ToolError(out)
+    return out
+
+
+def t_user_service_restart(a: dict) -> str:
+    gated("user_service_restart", a, "user", "Friday wants to restart one of your services",
+          f"systemctl --user restart {a['unit']}")
+    rc, out = run(["systemctl", "--user", "restart", a["unit"]], timeout=60)
+    if rc:
+        raise ToolError(out or f"restart failed (rc={rc})")
+    _, st = run(["systemctl", "--user", "is-active", a["unit"]])
+    return f"restarted {a['unit']}: {st}"
+
+
+# ---------------------------------------------------------------------------
+# system-tier tools (dialog + polkit password + snapshots)
+# ---------------------------------------------------------------------------
+
+def _system(tool: str, a: dict, title: str, change: str, *helper_args: str) -> str:
+    gated(tool, a, "system", title, change)
+    result = run_helper(*helper_args)
+    audit({"tool": tool, "tier": "system", "args": a, "decision": "approved",
+           "rc": result.get("rc"), "snapshot_pre": result.get("pre"), "snapshot_post": result.get("post")})
+    if result.get("rc") != 0:
+        raise ToolError(f"Helper failed (rc={result.get('rc')}):\n{result['output']}")
+    undo = f"\nUndo: tos undo {result['pre']}" if result.get("pre") else ""
+    return f"Done. Snapshots {result.get('pre')} → {result.get('post')}.{undo}\n\n{result['output']}"
+
+
+def t_package_install(a: dict) -> str:
+    pkgs = a["packages"]
+    return _system("package_install", a, "Friday wants to install packages",
+                   "Install from the CachyOS/Arch repositories (no AUR):\n  " + " ".join(pkgs),
+                   "install", *pkgs)
+
+
+def t_system_update(a: dict) -> str:
+    _, pending = run(["checkupdates"], timeout=90)
+    preview = clip(pending or "(could not list pending updates)", 25)
+    return _system("system_update", a, "Friday wants to update the system",
+                   f"pacman -Syu — full system update:\n{preview}", "update")
+
+
+def t_service_restart(a: dict) -> str:
+    return _system("service_restart", a, "Friday wants to restart a system service",
+                   f"systemctl restart {a['unit']}", "restart", a["unit"])
+
+
+def t_nvidia_runtime_pm(a: dict) -> str:
+    on = bool(a["enable"])
+    change = ("Create /etc/modprobe.d/tos-nvidia-pm.conf:\n"
+              "  options nvidia NVreg_DynamicPowerManagement=0x02\n(takes effect after reboot)"
+              if on else "Remove /etc/modprobe.d/tos-nvidia-pm.conf (driver default; after reboot)")
+    return _system("nvidia_runtime_pm", a, "Friday wants to change NVIDIA power management",
+                   change, "nvidia-pm", "on" if on else "off")
+
+
+# ---------------------------------------------------------------------------
+# tool registry
+# ---------------------------------------------------------------------------
+
+REASON = {"type": "string", "maxLength": 500,
+          "description": "One or two sentences on why. Shown to the person, labelled as your claim."}
+UNIT = {"type": "string", "pattern": UNIT_RE.pattern, "description": "Full unit name, e.g. pipewire.service"}
+
+
+def _tool(name, title, tier, desc, fn, props=None, required=None):
+    schema = {"type": "object", "properties": props or {}, "additionalProperties": False}
+    if required:
+        schema["required"] = required
+    return {"name": name, "title": title, "tier": tier, "fn": fn, "description": f"[{tier}] {desc}",
+            "inputSchema": schema,
+            "annotations": {"title": title, "readOnlyHint": tier == "read",
+                            "destructiveHint": False, "idempotentHint": tier == "read",
+                            "openWorldHint": False}}
+
+
+TOOLS = [
+    _tool("system_status", "System status", "read",
+          "OS, kernel, uptime, memory, disk, battery, theme, failed-unit counts.", t_system_status),
+    _tool("journal_errors", "Journal errors", "read", "Recent journal entries at a priority.",
+          t_journal_errors,
+          {"since": {"type": "string", "enum": ["boot", "1h", "24h"], "default": "boot"},
+           "priority": {"type": "string", "enum": ["err", "warning"], "default": "err"},
+           "unit": UNIT, "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 80}}),
+    _tool("service_status", "Service status", "read", "systemctl status of one unit.", t_service_status,
+          {"unit": UNIT, "scope": {"type": "string", "enum": ["system", "user"], "default": "system"}},
+          ["unit"]),
+    _tool("failed_units", "Failed units", "read", "Failed system and user units.", t_failed_units),
+    _tool("recent_crashes", "Recent crashes", "read", "Core dumps from the last N days.", t_recent_crashes,
+          {"days": {"type": "integer", "minimum": 1, "maximum": 30, "default": 7}}),
+    _tool("package_info", "Package info", "read", "Installed or repository info for one package.",
+          t_package_info, {"name": {"type": "string", "pattern": PKG_RE.pattern}}, ["name"]),
+    _tool("pending_updates", "Pending updates", "read", "Packages with updates available.", t_pending_updates),
+    _tool("snapshots", "Snapshots", "read", "Recent Snapper snapshots of the root filesystem.", t_snapshots,
+          {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 15}}),
+    _tool("gpu_status", "GPU status", "read",
+          "Every GPU with driver, PCI power state and runtime-PM status; nvidia-smi; NVIDIA PM config.",
+          t_gpu_status),
+    _tool("disk_usage", "Disk usage", "read", "Filesystems and the largest folders in your home.",
+          t_disk_usage),
+    _tool("network_status", "Network status", "read", "Interfaces, NetworkManager and Tailscale state.",
+          t_network_status),
+    _tool("theme_list", "Themes", "read", "Current theme and available themes.", t_theme_list),
+    _tool("activity_log", "Activity log", "read", "Recent Friday actions and decisions.", t_activity_log,
+          {"limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}),
+
+    _tool("theme_set", "Set theme", "user", "Apply a theme. The person approves in a dialog.", t_theme_set,
+          {"name": {"type": "string", "pattern": THEME_RE.pattern}, "reason": REASON}, ["name", "reason"]),
+    _tool("user_service_restart", "Restart user service", "user",
+          "Restart one of the person's own systemd user units. Dialog approval.", t_user_service_restart,
+          {"unit": UNIT, "reason": REASON}, ["unit", "reason"]),
+
+    _tool("package_install", "Install packages", "system",
+          "Install 1-10 packages from the official repos (no AUR). Dialog + password; snapshots before/after.",
+          t_package_install,
+          {"packages": {"type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": True,
+                        "items": {"type": "string", "pattern": PKG_RE.pattern}},
+           "reason": REASON}, ["packages", "reason"]),
+    _tool("system_update", "Update system", "system",
+          "Full system update (pacman -Syu). Dialog + password; snapshots before/after.", t_system_update,
+          {"reason": REASON}, ["reason"]),
+    _tool("service_restart", "Restart system service", "system",
+          "Restart a system unit. Dialog + password; snapshots before/after.", t_service_restart,
+          {"unit": UNIT, "reason": REASON}, ["unit", "reason"]),
+    _tool("nvidia_runtime_pm", "NVIDIA runtime power management", "system",
+          "Let the NVIDIA GPU power down when idle (or revert to driver default). Needs a reboot.",
+          t_nvidia_runtime_pm, {"enable": {"type": "boolean"}, "reason": REASON}, ["enable", "reason"]),
+]
+BY_NAME = {t["name"]: t for t in TOOLS}
+
+
+def validate(tool: dict, args: dict) -> dict:
+    """Enforce the input schema ourselves; never trust the client to have done it."""
+    schema = tool["inputSchema"]
+    props = schema["properties"]
+    unknown = set(args) - set(props)
+    if unknown:
+        raise ToolError(f"Unknown arguments: {sorted(unknown)}")
+    for req in schema.get("required", []):
+        if req not in args:
+            raise ToolError(f"Missing required argument: {req}")
+    out = {}
+    for key, spec in props.items():
+        if key not in args:
+            if "default" in spec:
+                out[key] = spec["default"]
+            continue
+        val = args[key]
+        kind = spec.get("type")
+        ok = {"string": isinstance(val, str), "integer": isinstance(val, int) and not isinstance(val, bool),
+              "boolean": isinstance(val, bool), "array": isinstance(val, list)}.get(kind, True)
+        if not ok:
+            raise ToolError(f"{key} must be a {kind}")
+        if kind == "string":
+            if "enum" in spec and val not in spec["enum"]:
+                raise ToolError(f"{key} must be one of {spec['enum']}")
+            if "pattern" in spec and not re.fullmatch(spec["pattern"], val):
+                raise ToolError(f"{key} has an invalid format")
+            if len(val) > spec.get("maxLength", 500):
+                raise ToolError(f"{key} is too long")
+        if kind == "integer" and not (spec.get("minimum", val) <= val <= spec.get("maximum", val)):
+            raise ToolError(f"{key} out of range")
+        if kind == "array":
+            if not (spec.get("minItems", 0) <= len(val) <= spec.get("maxItems", 1000)):
+                raise ToolError(f"{key} has the wrong number of items")
+            if spec.get("uniqueItems") and len(set(map(str, val))) != len(val):
+                raise ToolError(f"{key} has duplicates")
+            item_pat = spec.get("items", {}).get("pattern")
+            for item in val:
+                if not isinstance(item, str) or (item_pat and not re.fullmatch(item_pat, item)):
+                    raise ToolError(f"{key} has an invalid item")
+        out[key] = val
+    return out
+
+
+def call_tool(name: str, args: dict) -> dict:
+    tool = BY_NAME.get(name)
+    if tool is None:
+        return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
+    try:
+        clean = validate(tool, args or {})
+        text = tool["fn"](clean)
+        if tool["tier"] == "read":
+            audit({"tool": name, "tier": "read", "args": clean, "decision": "auto"})
+        elif tool["tier"] == "user":
+            audit({"tool": name, "tier": "user", "args": clean, "decision": "approved"})
+        return {"content": [{"type": "text", "text": clip(redact(text), 400)}], "isError": False}
+    except ToolError as e:
+        return {"content": [{"type": "text", "text": str(e)}], "isError": True}
+    except Exception as e:  # never crash the server on one bad call
+        log(f"{name} crashed: {e!r}")
+        return {"content": [{"type": "text", "text": f"Internal error in {name}: {type(e).__name__}"}],
+                "isError": True}
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC over stdio (MCP handshake era: initialize / tools/list / tools/call)
+# ---------------------------------------------------------------------------
+
+def public_tool(t: dict) -> dict:
+    return {k: t[k] for k in ("name", "title", "description", "inputSchema", "annotations")}
+
+
+def handle(msg: dict) -> dict | None:
+    method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
+    if mid is None:  # notification (initialized, cancelled, ...): nothing to answer
+        return None
+
+    def ok(result):
+        return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+    def err(code, message):
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+
+    if method == "initialize":
+        asked = params.get("protocolVersion")
+        version = asked if asked in HANDSHAKE_VERSIONS else HANDSHAKE_VERSIONS[-1]
+        return ok({"protocolVersion": version,
+                   "capabilities": {"tools": {"listChanged": False}},
+                   "serverInfo": {"name": "tegendo-os", "title": "tegendo-os (Friday)", "version": VERSION},
+                   "instructions": INSTRUCTIONS})
+    if method == "ping":
+        return ok({})
+    if method == "tools/list":
+        return ok({"tools": [public_tool(t) for t in TOOLS]})
+    if method == "tools/call":
+        if not isinstance(params.get("arguments", {}), dict):
+            return err(-32602, "arguments must be an object")
+        return ok(call_tool(str(params.get("name")), params.get("arguments") or {}))
+    return err(-32601, f"Method not found: {method}")
+
+
+def main() -> int:
+    if sys.argv[1:] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if sys.argv[1:] == ["--list-tools"]:
+        for t in TOOLS:
+            print(f"{t['tier']:<7} {t['name']:<22} {t['title']}")
+        return 0
+    log(f"v{VERSION} ready ({len(TOOLS)} tools)")
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+        else:
+            reply = (handle(msg) if isinstance(msg, dict) else
+                     {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid request"}})
+        if reply is not None:
+            sys.stdout.write(json.dumps(reply) + "\n")
+            sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

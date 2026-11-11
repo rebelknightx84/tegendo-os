@@ -5,7 +5,12 @@
 
 # Repo location on disk (tools like `tos apply` use it)
 tos_repo_dir: "{{ playbook_dir | dirname }}"
-tos_version: "0.1.0"
+tos_version: "0.2.0"
+
+# ---- friday -----------------------------------------------------------------
+# tos-mcp: the OS connector for Friday (any MCP client, e.g. Claude Code).
+# Read = automatic, your settings = dialog, system = dialog + password + snapshots.
+tos_friday: true
 
 # ---- base -------------------------------------------------------------------
 tos_extra_packages: []          # add your own pacman packages here
