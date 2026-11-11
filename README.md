@@ -20,6 +20,12 @@ previous one.
   Reading is automatic and redacted; your settings and Flatpak apps need a
   click; system changes need a click plus your password. There's no shell
   tool. See [docs/FRIDAY.md](docs/FRIDAY.md).
+- **Tegendo OS branding**: the name in About, the boot menu and the console;
+  the Tegendo logo and boot splash (including the disk-unlock screen); the
+  Tegendo theme and wallpaper by default; fastfetch with the Tegendo logo in
+  the first terminal of each boot (`touch ~/.config/tegendo-os/no-welcome` to
+  turn it off). Fedora stays underneath (`ID=fedora`), so Fedora tools,
+  Flatpak and Distrobox work unchanged.
 - **Omarchy's 22 themes**: `tos theme set tokyo-night` recolors COSMIC
   (accent, background, wallpaper), Kitty and btop, and generates matching
   configs for Alacritty, Foot, Helix, Neovim, VS Code and more.
@@ -92,6 +98,7 @@ image/build.sh          installs packages, tools, data, hardening (runs at build
 image/packages.txt      system packages, official repos only
 image/flatpaks.txt      Flatpaks every machine gets (Steam, Proton tools, ...)
 image/nvidia/           NVIDIA: build + sign modules (stage 1), install (stage 2), RPM Fusion repo
+image/branding.sh       name (os-release), icon, boot splash + initramfs, fastfetch, welcome
 image/system/           firewalld zone, sshd drop-in
 src/bin/                tos, tos-theme, tos-mcp, tos-doctor, tos-agent, tos-crash-watch, tos-setup
 src/lib/                tos_redact.py (shared secret scrubbing)
@@ -100,9 +107,12 @@ src/libexec/tos-flatpak-provision  installs image/flatpaks.txt on boot
 src/polkit/             password-every-time policy for tos-helper
 src/skills/             the tegendo-os skill (teaches agents how this system works)
 src/share/cosmic/       COSMIC base palettes (from libcosmic, MPL-2.0)
+src/share/branding/     logo + splash + wallpaper sources (SVG), fastfetch logo/config
+src/share/themes/       our own themes (tegendo, the default)
 vendor/omarchy/         pinned, data-only slice of Omarchy (themes, templates, crash skill)
 tools/upstream-sync.sh  the only way upstream content enters this repo
 tools/make-mok-key.sh   one-time: your NVIDIA module-signing key
+tools/render-branding.sh  re-render the branding PNGs after editing the SVGs
 tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a real MCP client), Flatpak provisioning
 .github/workflows/      ci.yml (lint + tests), image.yml (build, push, sign)
 ```
@@ -119,7 +129,8 @@ tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a 
 
 1. **Done:** themes, doctor, crash watcher; Friday's OS connector (tos-mcp).
 2. **Done (v0.3):** Fedora COSMIC Atomic bootc image, built and signed in CI.
-3. **Now (v0.4):** NVIDIA in the image (signed with your key), gaming Flatpak set.
+3. **Done (v0.4):** NVIDIA in the image (signed with your key), gaming Flatpak set.
+   **Now (v0.5):** Tegendo OS branding (name, logo, boot splash, default theme, terminal welcome).
 4. **Next:** signature-enforced updates; Friday's Super+Space assistant and
    proactive watchers.
 5. **v2/v3: one-click app menu** (Omarchy-style): a curated catalog of
