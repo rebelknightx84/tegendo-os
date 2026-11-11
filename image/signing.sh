@@ -6,12 +6,13 @@
 # Installs:
 #   /etc/pki/containers/tegendo-os.pub      the cosign public key (image/signing/cosign.pub)
 #   /etc/containers/registries.d/…          find cosign signatures on the registry
-#   /etc/containers/policy.json             Fedora's default policy + one rule:
-#                                           <image repo> must be signed by that key
+#   /etc/containers/policy.json             default reject (bootc requires it), every
+#                                           transport allows everything as before,
+#                                           and <image repo> must be signed by that key
 #
 # The rule only bites once the machine's origin requires it: `tos signing
-# enforce` (= bootc switch --enforce-container-sigpolicy). Everything else
-# keeps Fedora's default policy.
+# enforce` (= bootc switch --enforce-container-sigpolicy). Other images
+# behave exactly as with Fedora's default policy.
 #
 # Usage: signing.sh <repo root> <image repo, e.g. ghcr.io/owner/tegendo-os> [dest root]
 # =============================================================================
@@ -37,12 +38,21 @@ EOF
 
 base=$root/usr/share/containers/policy.json
 [[ -f $base ]] || base=/usr/share/containers/policy.json
+# bootc refuses to enforce signatures while the policy's top-level default is
+# insecureAcceptAnything (it would let other sources through), so, as Universal
+# Blue does: default reject; every transport explicitly allows everything as
+# before (scope ""); our repo requires our key. Net effect for other images:
+# unchanged.
 jq --arg repo "$repo" --arg key "$keypath" '
-  .transports.docker[$repo] = [{
-    "type": "sigstoreSigned",
-    "keyPath": $key,
-    "signedIdentity": {"type": "matchRepository"}
-  }]' "$base" >"$root/etc/containers/policy.json.new"
+  .default = [{"type": "reject"}]
+  | reduce ("docker", "docker-daemon", "docker-archive", "oci", "oci-archive",
+            "containers-storage", "dir", "tarball") as $t (.;
+      .transports[$t][""] //= [{"type": "insecureAcceptAnything"}])
+  | .transports.docker[$repo] = [{
+      "type": "sigstoreSigned",
+      "keyPath": $key,
+      "signedIdentity": {"type": "matchRepository"}
+    }]' "$base" >"$root/etc/containers/policy.json.new"
 mv "$root/etc/containers/policy.json.new" "$root/etc/containers/policy.json"
 chmod 644 "$root/etc/containers/policy.json"
 echo "signing: $repo requires the key in $keypath (enforced after: tos signing enforce)"
