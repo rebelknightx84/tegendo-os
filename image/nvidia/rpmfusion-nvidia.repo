@@ -1,12 +1,14 @@
 # RPM Fusion nonfree, scoped to NVIDIA packages only.
 #
-# The one exception to "official Fedora repos only". It exists only while the
-# image is being built (build-kmod.sh and install.sh add it, then delete it),
-# so the finished image has no RPM Fusion repo and never pulls from it.
+# The one exception to "official Fedora repos only". It exists only in the
+# throwaway nvidia-kmod build stage (build-kmod.sh), which downloads the driver
+# packages once; the finished image has no RPM Fusion repo and never pulls from it.
 #
 # Trust anchor: RPM Fusion's signing key from Fedora's own
 # distribution-gpg-keys package, so the key itself arrives through Fedora.
 # includepkgs limits this repo to package names containing "nvidia".
+# minrate/timeout: drop a mirror that's slower than 256 KiB/s for 30 s and try
+# the next one (a 30 KiB/s mirror once cost a build 75 minutes).
 
 [tos-rpmfusion-nonfree]
 name=RPM Fusion nonfree $releasever (NVIDIA only, build time)
@@ -15,6 +17,8 @@ enabled=1
 gpgcheck=1
 gpgkey=file:///usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-nonfree-fedora-$releasever
 includepkgs=*nvidia*
+minrate=262144
+timeout=30
 
 [tos-rpmfusion-nonfree-updates]
 name=RPM Fusion nonfree $releasever updates (NVIDIA only, build time)
@@ -23,3 +27,5 @@ enabled=1
 gpgcheck=1
 gpgkey=file:///usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-nonfree-fedora-$releasever
 includepkgs=*nvidia*
+minrate=262144
+timeout=30

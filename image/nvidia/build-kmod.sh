@@ -52,7 +52,15 @@ echo '%_with_kmod_nvidia_open 1' >/etc/rpm/macros.nvidia-kmod
 # build right away as root, which akmods refuses and dnf counts as a failed
 # install. We run the build ourselves below, for the right kernel.
 dnf -y install --setopt=install_weak_deps=False "kernel-devel-$kver" akmods openssl cpio
-dnf -y install --setopt=install_weak_deps=False --setopt=tsflags=noscripts akmod-nvidia
+# keepcache: the downloaded RPMs are handed to stage 2, so the slow part (RPM
+# Fusion mirrors) happens once per build. dnf already checked their signatures.
+dnf -y install --setopt=install_weak_deps=False --setopt=tsflags=noscripts --setopt=keepcache=True akmod-nvidia
+ver=$(rpm -q --qf '%{VERSION}' akmod-nvidia)
+#   xorg-x11-drv-nvidia        driver libraries (Wayland/GBM, Vulkan, OpenGL)  [pulled by akmod-nvidia]
+#   xorg-x11-drv-nvidia-cuda   nvidia-smi + CUDA/NVENC libraries (local AI, encoding)
+#   xorg-x11-drv-nvidia-power  suspend/resume/hibernate helpers
+dnf -y install --setopt=install_weak_deps=False --setopt=tsflags=noscripts --setopt=keepcache=True \
+  "xorg-x11-drv-nvidia-$ver" "xorg-x11-drv-nvidia-cuda-$ver" "xorg-x11-drv-nvidia-power-$ver"
 # Container builds can leave these with odd permissions, which breaks rpmbuild.
 chmod 1777 /tmp /var/tmp
 mkdir -p /var/lib/alternatives
@@ -112,7 +120,14 @@ done
 
 # ---- hand off --------------------------------------------------------------------------
 cp "${rpms[0]}" "$out/"
-rpm -q --qf '%{VERSION}\n' akmod-nvidia >"$out/NVIDIA_VERSION"
+# Userspace RPMs from RPM Fusion, minus the build-only ones (akmod, module source).
+install -d "$out/userspace"
+find /var/cache/libdnf5 -path '*tos-rpmfusion*' -name '*.rpm' \
+  ! -name 'akmod-nvidia-*' ! -name '*-kmodsrc-*' -exec cp -t "$out/userspace" {} +
+for p in xorg-x11-drv-nvidia xorg-x11-drv-nvidia-cuda xorg-x11-drv-nvidia-power; do
+  compgen -G "$out/userspace/$p-$ver-*.rpm" >/dev/null || die "$p-$ver missing from the hand-off"
+done
+echo "$ver" >"$out/NVIDIA_VERSION"
 echo "$signed_with" >"$out/SIGNED_WITH"
 [[ $signed_with == mok ]] && cp "$repo_cert" "$out/tegendo-mok.der"
 echo "nvidia: built $(basename "${rpms[0]}") (driver $(cat "$out/NVIDIA_VERSION"), signed with: $signed_with)"

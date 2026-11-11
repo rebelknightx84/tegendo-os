@@ -1,8 +1,11 @@
 #!/usr/bin/bash
 # =============================================================================
 # install.sh — runs in the final image build (called by build.sh). Installs the
-# signed modules built by build-kmod.sh plus the matching NVIDIA userspace from
-# RPM Fusion, then removes the repo again. Usage: install.sh <dir from build-kmod.sh>
+# signed modules and the matching NVIDIA userspace RPMs that build-kmod.sh
+# downloaded from RPM Fusion. No network and no RPM Fusion repo here: the RPMs
+# are re-verified against RPM Fusion's key (from Fedora's distribution-gpg-keys)
+# and installed as local files; their remaining deps come from Fedora.
+# Usage: install.sh <dir from build-kmod.sh>
 # =============================================================================
 set -euo pipefail
 
@@ -23,15 +26,21 @@ mapfile -t kmods < <(find "$in" -maxdepth 1 -name 'kmod-nvidia-*.rpm')
 kver=$(ls /usr/lib/modules)
 [[ $(basename "${kmods[0]}") == kmod-nvidia-"$kver"-* ]] || die "$(basename "${kmods[0]}") doesn't match kernel $kver"
 
-enable_rpmfusion "$here"
-# Userspace pinned to the module's version. No akmods: nothing compiles on the machine.
-#   xorg-x11-drv-nvidia        driver libraries (Wayland/GBM, Vulkan, OpenGL)
-#   xorg-x11-drv-nvidia-cuda   nvidia-smi + CUDA/NVENC libraries (local AI, encoding)
-#   xorg-x11-drv-nvidia-power  suspend/resume/hibernate helpers
-dnf -y install --setopt=install_weak_deps=False \
-  "${kmods[0]}" \
-  "xorg-x11-drv-nvidia-$ver" "xorg-x11-drv-nvidia-cuda-$ver" "xorg-x11-drv-nvidia-power-$ver"
-disable_rpmfusion
+mapfile -t userspace < <(find "$in/userspace" -maxdepth 1 -name '*.rpm')
+(( ${#userspace[@]} > 0 )) || die "no NVIDIA userspace RPMs in $in/userspace"
+
+# Verify every RPM Fusion package's signature again, in a throwaway rpm database
+# (so RPM Fusion's key is never trusted by the finished image).
+dnf -y install --setopt=install_weak_deps=False distribution-gpg-keys
+keydb=$(mktemp -d)
+rpmkeys --dbpath "$keydb" --import "/usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-nonfree-fedora-$(rpm -E %fedora)"
+for p in "${userspace[@]}"; do
+  rpmkeys --dbpath "$keydb" --checksig "$p" >/dev/null || die "bad or missing RPM Fusion signature: $(basename "$p")"
+done
+rm -rf "$keydb"
+
+# No akmods: nothing compiles on the machine.
+dnf -y install --setopt=install_weak_deps=False "${kmods[0]}" "${userspace[@]}"
 [[ -f /etc/nvidia/kernel.conf ]] && sed -i 's/^MODULE_VARIANT=.*/MODULE_VARIANT=kernel-open/' /etc/nvidia/kernel.conf
 rpm -q akmods akmod-nvidia >/dev/null 2>&1 && die "akmods ended up in the image; it must not"
 dnf clean all

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared by build-kmod.sh and install.sh (sourced, never run).
+# Shared helpers for the NVIDIA build scripts (sourced, never run).
 
 die() { echo "nvidia: $*" >&2; exit 1; }
 
@@ -12,8 +12,4 @@ enable_rpmfusion() {
   [[ -f /usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-nonfree-fedora-$rel ]] ||
     die "Fedora's distribution-gpg-keys has no RPM Fusion nonfree key for Fedora $rel yet; can't verify RPM Fusion packages."
   install -m644 "$here/rpmfusion-nvidia.repo" /etc/yum.repos.d/tos-rpmfusion-nvidia.repo
-}
-
-disable_rpmfusion() {
-  rm -f /etc/yum.repos.d/tos-rpmfusion-nvidia.repo
 }

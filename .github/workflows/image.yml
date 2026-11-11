@@ -27,6 +27,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # A normal build takes ~15 min; fail fast instead of hanging for 6 hours.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write     # push to ghcr.io
