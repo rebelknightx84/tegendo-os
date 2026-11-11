@@ -4,13 +4,16 @@
 An MCP server over stdio, standard library only. It exposes the OS as tools in
 four tiers, and the tiers are enforced HERE, by the OS, not by the AI client:
 
-  read    automatic       status, logs, packages, snapshots, GPU — all redacted
+  read    automatic       status, logs, packages, deployments, GPU — all redacted
   user    ask first       a desktop dialog shows the exact change; you click
+                          (themes, your services, Flatpak apps for your user)
   system  ask + password  same dialog, then polkit asks for your password; a
                           root helper with a fixed command list does the work
-                          between Snapper pre/post snapshots
+                          (OS updates are staged images; the old one stays
+                          bootable)
   never   not exposed     no shell, no file writes/deletes, no disks, no
-                          firewall changes, no snapshot rollback
+                          firewall changes, no rollback, no live package
+                          layering (system packages go in the image, by PR)
 
 Every call is appended to ~/.local/state/tegendo-os/friday/audit.jsonl (0600);
 system actions are also logged to the journal by the root helper.
@@ -37,9 +40,9 @@ for _candidate in (os.environ.get("TOS_LIB", ""), HERE.parent / "lib" / "tegendo
         break
 from tos_redact import redact  # noqa: E402
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
-HELPER = os.environ.get("TOS_HELPER", "/usr/local/lib/tegendo-os/tos-helper")
+HELPER = os.environ.get("TOS_HELPER", "/usr/lib/tegendo-os/tos-helper")
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "tegendo-os" / "friday"
 AUDIT = STATE / "audit.jsonl"
 CONFIRM_TIMEOUT = int(os.environ.get("TOS_CONFIRM_TIMEOUT", "120"))
@@ -47,18 +50,23 @@ DENY_COOLDOWN = 60  # seconds: a denied request can't re-prompt you right away
 
 # First character alphanumeric so nothing can be read as a command-line option.
 UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,127}\.(service|socket|timer|target|path|mount)$")
-PKG_RE = re.compile(r"^[a-z0-9@._+][a-z0-9@._+-]{0,99}$")
+PKG_RE = re.compile(r"^[A-Za-z0-9@._+][A-Za-z0-9@._+-]{0,99}$")
+APP_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}$")
 THEME_RE = re.compile(r"^[a-z0-9][a-z0-9 _-]{0,63}$", re.I)
 
 INSTRUCTIONS = """\
-You are connected to tegendo-os (CachyOS + COSMIC). Tools are tiered:
-read tools run immediately; 'user' tools show the person a dialog and wait;
-'system' tools also need their password and are wrapped in Snapper snapshots.
+You are connected to tegendo-os (Fedora COSMIC Atomic, a bootc image). Tools
+are tiered: read tools run immediately; 'user' tools show the person a dialog
+and wait; 'system' tools also need their password. The OS is an image, so:
+desktop apps install as Flatpaks (flatpak_search, then flatpak_install); CLI
+and dev tools go in a Distrobox container; system packages are added to the
+image by the person (request_system_package explains how). OS updates are
+staged and applied on reboot; the previous image stays bootable.
 Investigate with read tools before proposing a change. Give a short, honest
 `reason` on every change: the person sees it, labelled as your claim. If a
 change is denied, do not retry it; explain alternatives instead. There is no
 tool for shell access, deleting files, disks, firewall changes or rollback —
-those stay with the person (rollback: `tos undo <snapshot>`)."""
+those stay with the person (rollback: `tos undo`)."""
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +168,7 @@ def gated(tool: str, args: dict, tier: str, title: str, change: str) -> None:
 def run_helper(*helper_args: str) -> dict:
     """Run the root helper through polkit. Returns its JSON summary."""
     if not Path(HELPER).is_file():
-        raise ToolError(f"Root helper not installed at {HELPER}. Run `tos apply`.")
+        raise ToolError(f"Root helper not installed at {HELPER}. Is this machine running the tegendo-os image? (`tos status`)")
     rc, out = run(["pkexec", HELPER, *helper_args], timeout=1800)
     summary: dict = {}
     for line in reversed(out.splitlines()):
@@ -194,6 +202,7 @@ def t_system_status(_: dict) -> str:
         f"load: {read_file('/proc/loadavg')[:14]}",
         f"memory: {int(mem.get('MemAvailable', 0)) // 1024} MiB free of {int(mem.get('MemTotal', 0)) // 1024} MiB",
         f"tegendo-os: {read_file('/usr/share/tegendo-os/VERSION') or '?'}",
+        f"image: {_booted_image()}",
         f"theme: {read_file(str(Path.home() / '.local/state/tegendo-os/current/theme.name')) or '(none)'}",
     ]
     for mount in ("/", "/home"):
@@ -239,25 +248,61 @@ def t_recent_crashes(a: dict) -> str:
     return out or "(no core dumps)"
 
 
+def _booted_image() -> str:
+    rc, out = run(["rpm-ostree", "status", "--booted", "--json"])
+    if rc:
+        return "?"
+    try:
+        dep = json.loads(out)["deployments"][0]
+        return f"{dep.get('container-image-reference') or dep.get('origin', '?')} ({dep.get('version', '?')})"
+    except (ValueError, KeyError, IndexError):
+        return "?"
+
+
 def t_package_info(a: dict) -> str:
-    rc, out = run(["pacman", "-Qi", a["name"]])
-    if rc != 0:
-        rc, out = run(["pacman", "-Si", a["name"]])
-        out = "(not installed — repository info:)\n" + out if rc == 0 else f"(no package named {a['name']})"
-    return out
+    rc, out = run(["rpm", "-qi", a["name"]])
+    if rc == 0:
+        return out
+    rc, fp = run(["flatpak", "info", a["name"]])
+    if rc == 0:
+        return "(installed as a Flatpak)\n" + fp
+    return (f"(no installed RPM or Flatpak named {a['name']}. For a desktop app try flatpak_search; "
+            "for a system package, request_system_package.)")
 
 
 def t_pending_updates(_: dict) -> str:
-    rc, out = run(["checkupdates"], timeout=90)
-    if rc == 2:
-        return "(no updates pending)"
-    return out
+    _, os_check = run(["rpm-ostree", "upgrade", "--check"], timeout=120)
+    _, fp = run(["flatpak", "remote-ls", "--updates", "--columns=application,version"], timeout=90)
+    return f"OS image:\n{os_check}\n\nFlatpaks:\n{fp or '(none)'}"
 
 
-def t_snapshots(a: dict) -> str:
-    _, out = run(["snapper", "-c", "root", "list"])
-    rows = out.splitlines()
-    return "\n".join(rows[:2] + rows[2:][-a.get("limit", 15):]) if len(rows) > 2 else out
+def t_deployments(_: dict) -> str:
+    _, out = run(["rpm-ostree", "status"])
+    return out + "\n\n(The ● deployment is running. `tos undo` boots the previous one.)"
+
+
+def t_flatpak_search(a: dict) -> str:
+    _, out = run(["flatpak", "search", "--columns=application,name,version,description", a["query"]],
+                 timeout=60)
+    return out or "(no matches on configured remotes)"
+
+
+def t_request_system_package(a: dict) -> str:
+    pkgs = a["packages"]
+    have = [p for p in pkgs if run(["rpm", "-q", p])[0] == 0]
+    todo = [p for p in pkgs if p not in have]
+    if not todo:
+        return f"Already in the image: {' '.join(have)}"
+    lines = "\n".join(f"  {p}" for p in todo)
+    return (
+        "On tegendo-os, system packages are part of the OS image, so the person adds them "
+        "(nothing was changed). Tell them:\n"
+        f"1. Add to image/packages.txt in the tegendo-os repo:\n{lines}\n"
+        "2. Open a PR; CI builds and signs a new image. Merge when green.\n"
+        "3. Run `tos update`, then reboot. `tos undo` reverts if anything breaks.\n"
+        "Official Fedora repos only. If it's a desktop app, a Flatpak is usually better; "
+        "for a CLI or dev tool, a Distrobox container avoids changing the OS at all."
+        + (f"\n(Already installed: {' '.join(have)})" if have else ""))
 
 
 def t_gpu_status(_: dict) -> str:
@@ -334,33 +379,45 @@ def t_user_service_restart(a: dict) -> str:
     return f"restarted {a['unit']}: {st}"
 
 
+def t_flatpak_install(a: dict) -> str:
+    app = a["app_id"]
+    rc, _ = run(["flatpak", "remote-info", "--user", "flathub", app], timeout=60)
+    if rc:
+        raise ToolError(f"{app} isn't on Flathub (or Flathub isn't set up). Use flatpak_search.")
+    gated("flatpak_install", a, "user", "Friday wants to install an app",
+          f"flatpak install --user flathub {app}\n(for your user only; remove anytime with "
+          f"`flatpak uninstall {app}`)")
+    rc, out = run(["flatpak", "install", "--user", "--noninteractive", "flathub", app], timeout=1200)
+    if rc:
+        raise ToolError(out or f"install failed (rc={rc})")
+    return f"Installed {app} for your user.\n{clip(out, 20)}"
+
+
 # ---------------------------------------------------------------------------
-# system-tier tools (dialog + polkit password + snapshots)
+# system-tier tools (dialog + polkit password)
 # ---------------------------------------------------------------------------
 
 def _system(tool: str, a: dict, title: str, change: str, *helper_args: str) -> str:
     gated(tool, a, "system", title, change)
     result = run_helper(*helper_args)
-    audit({"tool": tool, "tier": "system", "args": a, "decision": "approved",
-           "rc": result.get("rc"), "snapshot_pre": result.get("pre"), "snapshot_post": result.get("post")})
+    audit({"tool": tool, "tier": "system", "args": a, "decision": "approved", "rc": result.get("rc"),
+           "staged": result.get("staged"), "backup": result.get("backup")})
     if result.get("rc") != 0:
         raise ToolError(f"Helper failed (rc={result.get('rc')}):\n{result['output']}")
-    undo = f"\nUndo: tos undo {result['pre']}" if result.get("pre") else ""
-    return f"Done. Snapshots {result.get('pre')} → {result.get('post')}.{undo}\n\n{result['output']}"
-
-
-def t_package_install(a: dict) -> str:
-    pkgs = a["packages"]
-    return _system("package_install", a, "Friday wants to install packages",
-                   "Install from the CachyOS/Arch repositories (no AUR):\n  " + " ".join(pkgs),
-                   "install", *pkgs)
+    extra = ""
+    if result.get("staged"):
+        extra = "\nNew image staged; it applies on reboot. Undo after reboot: `tos undo`."
+    elif result.get("backup"):
+        extra = f"\nPrevious state saved to {result['backup']}."
+    return f"Done.{extra}\n\n{result['output']}"
 
 
 def t_system_update(a: dict) -> str:
-    _, pending = run(["checkupdates"], timeout=90)
-    preview = clip(pending or "(could not list pending updates)", 25)
+    _, pending = run(["rpm-ostree", "upgrade", "--check"], timeout=120)
+    preview = clip(pending or "(could not check for a new image)", 25)
     return _system("system_update", a, "Friday wants to update the system",
-                   f"pacman -Syu — full system update:\n{preview}", "update")
+                   f"bootc upgrade — stage the newest tegendo-os image:\n{preview}\n\n"
+                   "Applies on next reboot; the current system stays bootable.", "update")
 
 
 def t_service_restart(a: dict) -> str:
@@ -371,8 +428,9 @@ def t_service_restart(a: dict) -> str:
 def t_nvidia_runtime_pm(a: dict) -> str:
     on = bool(a["enable"])
     change = ("Create /etc/modprobe.d/tos-nvidia-pm.conf:\n"
-              "  options nvidia NVreg_DynamicPowerManagement=0x02\n(takes effect after reboot)"
-              if on else "Remove /etc/modprobe.d/tos-nvidia-pm.conf (driver default; after reboot)")
+              "  options nvidia NVreg_DynamicPowerManagement=0x02\n"
+              "(takes effect after reboot; the previous file is backed up)"
+              if on else "Remove /etc/modprobe.d/tos-nvidia-pm.conf (driver default after reboot; backed up)")
     return _system("nvidia_runtime_pm", a, "Friday wants to change NVIDIA power management",
                    change, "nvidia-pm", "on" if on else "off")
 
@@ -399,7 +457,7 @@ def _tool(name, title, tier, desc, fn, props=None, required=None):
 
 TOOLS = [
     _tool("system_status", "System status", "read",
-          "OS, kernel, uptime, memory, disk, battery, theme, failed-unit counts.", t_system_status),
+          "OS, image, kernel, uptime, memory, disk, battery, theme, failed-unit counts.", t_system_status),
     _tool("journal_errors", "Journal errors", "read", "Recent journal entries at a priority.",
           t_journal_errors,
           {"since": {"type": "string", "enum": ["boot", "1h", "24h"], "default": "boot"},
@@ -411,11 +469,20 @@ TOOLS = [
     _tool("failed_units", "Failed units", "read", "Failed system and user units.", t_failed_units),
     _tool("recent_crashes", "Recent crashes", "read", "Core dumps from the last N days.", t_recent_crashes,
           {"days": {"type": "integer", "minimum": 1, "maximum": 30, "default": 7}}),
-    _tool("package_info", "Package info", "read", "Installed or repository info for one package.",
+    _tool("package_info", "Package info", "read", "Info on an installed RPM or Flatpak.",
           t_package_info, {"name": {"type": "string", "pattern": PKG_RE.pattern}}, ["name"]),
-    _tool("pending_updates", "Pending updates", "read", "Packages with updates available.", t_pending_updates),
-    _tool("snapshots", "Snapshots", "read", "Recent Snapper snapshots of the root filesystem.", t_snapshots,
-          {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 15}}),
+    _tool("pending_updates", "Pending updates", "read", "Whether a new OS image or Flatpak updates are available.",
+          t_pending_updates),
+    _tool("deployments", "OS deployments", "read",
+          "The running OS image, any staged update, and the rollback target.", t_deployments),
+    _tool("flatpak_search", "Search apps", "read", "Search Flathub for desktop apps.", t_flatpak_search,
+          {"query": {"type": "string", "pattern": r"^[A-Za-z0-9 ._+-]{2,64}$"}}, ["query"]),
+    _tool("request_system_package", "Request a system package", "read",
+          "Changes nothing: explains how the person adds system packages to the OS image "
+          "(this OS has no live package installs).", t_request_system_package,
+          {"packages": {"type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": True,
+                        "items": {"type": "string", "pattern": PKG_RE.pattern}},
+           "reason": REASON}, ["packages", "reason"]),
     _tool("gpu_status", "GPU status", "read",
           "Every GPU with driver, PCI power state and runtime-PM status; nvidia-smi; NVIDIA PM config.",
           t_gpu_status),
@@ -432,18 +499,18 @@ TOOLS = [
     _tool("user_service_restart", "Restart user service", "user",
           "Restart one of the person's own systemd user units. Dialog approval.", t_user_service_restart,
           {"unit": UNIT, "reason": REASON}, ["unit", "reason"]),
+    _tool("flatpak_install", "Install an app", "user",
+          "Install a Flathub app for the person's user only (no root). Dialog approval.", t_flatpak_install,
+          {"app_id": {"type": "string", "pattern": APP_ID_RE.pattern, "maxLength": 255,
+                      "description": "Flatpak application ID, e.g. org.mozilla.firefox"},
+           "reason": REASON}, ["app_id", "reason"]),
 
-    _tool("package_install", "Install packages", "system",
-          "Install 1-10 packages from the official repos (no AUR). Dialog + password; snapshots before/after.",
-          t_package_install,
-          {"packages": {"type": "array", "minItems": 1, "maxItems": 10, "uniqueItems": True,
-                        "items": {"type": "string", "pattern": PKG_RE.pattern}},
-           "reason": REASON}, ["packages", "reason"]),
     _tool("system_update", "Update system", "system",
-          "Full system update (pacman -Syu). Dialog + password; snapshots before/after.", t_system_update,
+          "Stage the newest OS image (bootc upgrade); applies on reboot, old image stays bootable. "
+          "Dialog + password.", t_system_update,
           {"reason": REASON}, ["reason"]),
     _tool("service_restart", "Restart system service", "system",
-          "Restart a system unit. Dialog + password; snapshots before/after.", t_service_restart,
+          "Restart a system unit. Dialog + password.", t_service_restart,
           {"unit": UNIT, "reason": REASON}, ["unit", "reason"]),
     _tool("nvidia_runtime_pm", "NVIDIA runtime power management", "system",
           "Let the NVIDIA GPU power down when idle (or revert to driver default). Needs a reboot.",

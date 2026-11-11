@@ -1,10 +1,8 @@
 [Unit]
 Description=tegendo-os crash watcher (offers AI diagnosis of your crashed apps)
-PartOf=graphical-session.target
-After=graphical-session.target
 
 [Service]
-ExecStart=/usr/local/bin/tos-crash-watch
+ExecStart=/usr/bin/tos-crash-watch
 Restart=on-failure
 RestartSec=5
 # Read-only helper: no new privileges, private /tmp, no writes outside config.
@@ -15,4 +13,6 @@ ProtectSystem=strict
 ReadWritePaths=-%h/.config/tegendo-os
 
 [Install]
-WantedBy=graphical-session.target
+# default.target rather than graphical-session.target: notifications only need
+# the session bus, and not every desktop activates graphical-session.target.
+WantedBy=default.target

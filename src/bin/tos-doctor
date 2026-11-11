@@ -78,11 +78,13 @@ section "Failed user units"  systemctl --user --failed --no-legend --plain
 section "Errors this boot"   journalctl -b -p err --no-pager -n 120 -o short-iso
 section "Kernel warnings"    journalctl -k -b -p warning --no-pager -n 60 -o short-iso
 section "Recent core dumps"  coredumpctl list --no-pager --since=-7d
-section "Recent upgrades"    bash -c "grep -E '\\[ALPM\\] (upgraded|installed|removed)' /var/log/pacman.log | tail -n 40"
-section "Pending updates"    checkupdates
+section "OS deployments"     rpm-ostree status
+section "Changes since last image" rpm-ostree db diff
+section "Pending updates"    rpm-ostree upgrade --check
+section "Flatpak apps"       flatpak list --app --columns=application,version,installation
 section "Disk"               df -h -x tmpfs -x devtmpfs -x efivarfs
 section "Memory"             free -h
-section "Snapshots"          snapper -c root list --columns number,date,description
+section "SELinux denials (this boot)" journalctl -b --no-pager -n 40 -o short-iso -t setroubleshoot -t audit --grep=denied
 section "Graphics devices"   bash -c "lspci -nn | grep -iE 'vga|3d|display'"
 section "GPU"                nvidia-smi --query-gpu=name,driver_version,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv
 section "Network"            ip -br addr
@@ -147,7 +149,7 @@ Follow the diagnose-crash skill ($SKILL_DIR/diagnose-crash/SKILL.md) for method 
 else
   task="Check this machine's health${question:+, focusing on: $question}. Use the tegendo-os skill ($SKILL_DIR/tegendo-os/SKILL.md) for how this system is built."
 fi
-rules="Rules: investigate read-only first. Before ANY change, explain it and wait for my approval, and take a snapshot first (sudo snapper -c root create -d 'pre-agent: <what>'). Separate what the evidence proves from what you infer."
+rules="Rules: investigate read-only first. Before ANY change, explain it and wait for my approval, and prefer the tegendo-os MCP tools (they gate changes for you); system packages are added to the OS image by me, not installed live. Separate what the evidence proves from what you infer."
 
 if [[ $agent == ollama ]]; then
   exec tos-agent "$task

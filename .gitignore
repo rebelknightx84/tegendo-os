@@ -2,3 +2,6 @@ tests/cosmic-ron-check/target/
 *.retry
 __pycache__/
 .DS_Store
+
+# MOK private key (tools/make-mok-key.sh): never commit
+*.key

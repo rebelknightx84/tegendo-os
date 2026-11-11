@@ -18,9 +18,16 @@ readonly COREDUMP_MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1   # systemd.journa
 readonly DEDUPE=${TOS_CRASH_DEDUPE_SECONDS:-60}
 readonly IGNORE=${TOS_CRASH_IGNORE:-}
 readonly MUTE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/tegendo-os/crash-mute"
-readonly TERM_CMD=${TOS_TERMINAL:-ghostty}
+readonly TERM_CMD=${TOS_TERMINAL:-kitty}
 
 declare -A last
+
+term_argv() {  # how each terminal takes a command to run
+  case "${TERM_CMD##*/}" in
+    kitty) printf '%s\0' "$TERM_CMD" ;;              # kitty <cmd> <args>
+    *)     printf '%s\0' "$TERM_CMD" -e ;;           # ghostty/foot/cosmic-term -e <cmd>
+  esac
+}
 
 offer() {  # offer <name> <pid> <exe> <signal>   (runs in background)
   local choice
@@ -29,9 +36,11 @@ offer() {  # offer <name> <pid> <exe> <signal>   (runs in background)
     "$1 crashed" "Signal $4 (pid $2)" 2>/dev/null) || return 0
   case "$choice" in
     # systemd-run starts the terminal as its own unit, outside this service's
-    # sandbox (read-only FS, NoNewPrivileges would block sudo for snapshots).
-    diagnose) exec systemd-run --user --quiet --collect -- \
-                "$TERM_CMD" -e tos-doctor crash "$2" "$1" "$3" "$4" ;;
+    # sandbox (read-only FS, NoNewPrivileges would block the password prompt).
+    diagnose)
+      local -a term
+      mapfile -d '' -t term < <(term_argv)
+      exec systemd-run --user --quiet --collect -- "${term[@]}" tos-doctor crash "$2" "$1" "$3" "$4" ;;
     mute) mkdir -p "$MUTE_DIR" && touch "$MUTE_DIR/$1" ;;
   esac
 }

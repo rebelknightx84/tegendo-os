@@ -1,0 +1,26 @@
+[Unit]
+Description=tegendo-os: install the image's Flatpak set from Flathub
+Documentation=file:///usr/share/tegendo-os/flatpaks.txt
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/share/tegendo-os/flatpaks.txt
+# Offline at boot: retry for a while, then give up until the next boot.
+StartLimitIntervalSec=3h
+StartLimitBurst=12
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/tegendo-os/tos-flatpak-provision
+Restart=on-failure
+RestartSec=10min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -5,7 +5,7 @@
 #   tos-agent "prompt"        start the configured agent with a prompt
 #   tos-agent --which         print the configured agent
 #
-# Config: ~/.config/tegendo-os/agent.conf (written by Ansible, edit freely)
+# Config: ~/.config/tegendo-os/agent.conf (created by tos-setup, edit freely)
 #   TOS_AGENT=claude|codex|ollama|custom
 #   TOS_AGENT_CMD=...           custom only; the prompt is appended as one arg
 #   TOS_OLLAMA_URL=http://stormbreaker:11434

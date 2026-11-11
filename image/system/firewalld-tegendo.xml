@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed by tegendo-os. Default zone: drop unsolicited inbound traffic.
+     Fedora Workstation's default zone allows ports 1025-65535; this doesn't.
+     Tailscale traffic is handled by the 'trusted' zone (tailscale0). -->
+<zone target="DROP">
+  <short>tegendo-os</short>
+  <description>Workstation default: no inbound connections except DHCPv6 replies. Use Tailscale for remote access.</description>
+  <service name="dhcpv6-client"/>
+</zone>

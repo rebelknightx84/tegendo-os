@@ -1,0 +1,47 @@
+# =============================================================================
+# tegendo-os — Fedora COSMIC Atomic + the tegendo-os layer, as one bootc image.
+#
+# Built, signed and published by CI (.github/workflows/image.yml). A Fedora
+# COSMIC Atomic machine moves onto it with:
+#     sudo bootc switch ghcr.io/<owner>/tegendo-os:45
+# and from then on updates atomically with `tos update` (rollback: `tos undo`).
+#
+# Local build (from the repo root; NVIDIA modules get a throwaway key):
+#     podman build -f image/Containerfile -t tegendo-os:dev .
+# With your Machine Owner Key (what CI does on main):
+#     podman build -f image/Containerfile --secret id=mok_key,src=/path/to/key \
+#       --build-arg REQUIRE_MOK_KEY=1 -t tegendo-os:dev .
+# Without NVIDIA:  --build-arg WITH_NVIDIA=0
+# =============================================================================
+ARG FEDORA_VERSION=45
+ARG BASE_IMAGE=quay.io/fedora-ostree-desktops/cosmic-atomic
+
+# ---- stage 1: NVIDIA kernel modules, built and signed, then thrown away ----------
+# Compilers, kernel headers, akmods and the private key live only here.
+FROM ${BASE_IMAGE}:${FEDORA_VERSION} AS nvidia-kmod
+ARG WITH_NVIDIA=1
+ARG REQUIRE_MOK_KEY=0
+RUN --mount=type=bind,source=image/nvidia,target=/ctx/nvidia,ro \
+    --mount=type=secret,id=mok_key \
+    WITH_NVIDIA="${WITH_NVIDIA}" REQUIRE_MOK_KEY="${REQUIRE_MOK_KEY}" /ctx/nvidia/build-kmod.sh
+
+# ---- stage 2: the image ------------------------------------------------------------
+FROM ${BASE_IMAGE}:${FEDORA_VERSION}
+
+ARG FEDORA_VERSION
+ARG TOS_VERSION=0.4.0
+LABEL org.opencontainers.image.title="tegendo-os" \
+      org.opencontainers.image.description="Fedora COSMIC Atomic with Friday, NVIDIA, gaming, themes and hardening" \
+      org.opencontainers.image.version="${TOS_VERSION}" \
+      org.opencontainers.image.licenses="NOASSERTION" \
+      containers.bootc="1"
+
+# Everything happens in one script so the layer stays small and auditable.
+# The repo is bind-mounted read-only; nothing from it lands in the image
+# except what build.sh copies on purpose. Only stage 1's /out comes across.
+RUN --mount=type=bind,source=.,target=/ctx,ro \
+    --mount=type=bind,from=nvidia-kmod,source=/out,target=/nvidia,ro \
+    TOS_VERSION="${TOS_VERSION}" FEDORA_VERSION="${FEDORA_VERSION}" /ctx/image/build.sh
+
+# bootc's own checks: the image must be a valid, bootable bootc image.
+RUN bootc container lint

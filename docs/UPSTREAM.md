@@ -13,7 +13,7 @@ git add vendor/omarchy && git commit -m "Sync Omarchy themes v4.0.7"
 git push -u origin HEAD                  # open a PR; CI must be green
 ```
 
-Then on each machine: `git pull && tos apply --tags themes`.
+Merging to main triggers a new image; then `tos update` on each machine.
 
 ## What `apply` enforces
 

@@ -5,65 +5,102 @@
 #   tos doctor [question]               AI-assisted health check (asks before sending)
 #   tos doctor crash <pid>              AI-assisted crash diagnosis
 #   tos agent "prompt"                  start your agent (never auto-approve)
-#   tos update                          update packages (snap-pac snapshots around it)
-#   tos apply                           re-run the Ansible playbook from your repo
-#   tos status                          version, pinned upstream, health summary
-#   tos undo <snapshot>                 revert a Friday change (you only; Friday can't)
+#   tos update                          stage the newest OS image + update Flatpaks
+#   tos undo                            boot the previous OS image (you only; Friday can't)
+#   tos setup [--force]                 re-run per-user setup
+#   tos status                          image, version, health summary
 #   tos friday-log [n]                  what Friday did recently
+#   tos mok [status|enroll]             Secure Boot key for the NVIDIA driver
 set -euo pipefail
 
-REPO=${TOS_REPO:-$HOME/tegendo-os}
+MOK_CERT=/usr/share/tegendo-os/mok/tegendo-mok.der
+
+mok_state() {
+  [[ -f $MOK_CERT ]] || { echo "no key in this image"; return; }
+  # Parse mokutil's words, not its exit code (which differs across versions).
+  local out
+  out=$(mokutil --test-key "$MOK_CERT" 2>&1 || true)
+  case $out in
+    *"already in the enrollment request"*) echo "pending: reboot and finish enrollment in MOK Manager" ;;
+    *"already enrolled"*) echo "enrolled" ;;
+    *"not enrolled"*) echo "not enrolled (run: tos mok enroll)" ;;
+    *) echo "unknown (${out%%$'\n'*})" ;;
+  esac
+}
 
 case "${1:-}" in
   theme)  shift; exec tos-theme "$@" ;;
   doctor) shift; exec tos-doctor "$@" ;;
   agent)  shift; exec tos-agent "$@" ;;
+  setup)  shift; exec tos-setup "$@" ;;
   update)
-    shift
-    if command -v paru >/dev/null; then
-      echo "Repo packages first, then AUR (paru shows each PKGBUILD diff before building)."
-      exec paru -Syu "$@"
+    echo "Checking for a new tegendo-os image..."
+    sudo bootc upgrade
+    echo
+    echo "Updating Flatpak apps..."
+    flatpak update -y --noninteractive
+    if bootc status --format=json 2>/dev/null | jq -e '.status.staged != null' >/dev/null; then
+      echo
+      echo "A new OS image is staged. Reboot to apply; \`tos undo\` returns to this one."
     fi
-    exec sudo pacman -Syu "$@"
     ;;
-  apply)
-    shift
-    [[ -d $REPO/ansible ]] || { echo "No repo at $REPO (set TOS_REPO)"; exit 1; }
-    cd "$REPO/ansible"
-    exec ansible-playbook site.yml --ask-become-pass "$@"
+  undo)
+    echo "Current deployments:"
+    rpm-ostree status
+    echo
+    echo "This makes the previous OS image the default for the next boot."
+    echo "Your home folder and Flatpaks are untouched; /etc keeps that image's version."
+    read -rp "Roll back on next reboot? [y/N] " ok
+    [[ $ok =~ ^[Yy]$ ]] || { echo "Nothing changed."; exit 0; }
+    sudo bootc rollback
+    echo "Done. Reboot to finish (run \`tos undo\` again to switch back)."
     ;;
   status)
     echo "tegendo-os $(cat /usr/share/tegendo-os/VERSION 2>/dev/null || echo '?')"
+    rpm-ostree status --booted --json 2>/dev/null |
+      jq -r '.deployments[0] | "image: \(.["container-image-reference"] // .origin) (\(.version // "?"))"' || true
     if [[ -f /usr/share/tegendo-os/UPSTREAM.lock ]]; then
       awk -F' = ' '$1=="ref"||$1=="commit"{printf "omarchy %s: %s\n", $1, $2}' /usr/share/tegendo-os/UPSTREAM.lock
     fi
     echo "theme: $(tos-theme current)"
     echo "agent: $(tos-agent --which)"
-    failed=$(systemctl --failed --no-legend --plain | wc -l)
-    echo "failed units: $failed"
+    echo "failed units: $(systemctl --failed --no-legend --plain | wc -l)"
     systemctl --user is-active --quiet tos-crash-watch && echo "crash watch: on" || echo "crash watch: off"
+    echo "selinux: $(getenforce 2>/dev/null || echo '?')"
+    if [[ -f /usr/share/tegendo-os/mok/SIGNED_WITH ]]; then
+      echo "nvidia: driver $(cat /sys/module/nvidia/version 2>/dev/null || echo 'not loaded'), key $(mok_state)"
+    fi
+    [[ -f /var/lib/tegendo-os/flatpaks.sha256 ]] && echo "flatpak set: installed" || echo "flatpak set: pending (needs network; see systemctl status tos-flatpak-provision)"
     ;;
-  undo)
-    pre=${2:?usage: tos undo <snapshot-number>  (the number Friday reported)}
-    [[ $pre =~ ^[0-9]+$ ]] || { echo "Not a snapshot number: $pre"; exit 1; }
-    post=$(sudo snapper --csvout -c root list --columns number,pre-number |
-             awk -F, -v p="$pre" '$2 == p { print $1 }' | tail -n 1)
-    [[ -n $post ]] || { echo "No 'post' snapshot is paired with $pre (see: sudo snapper -c root list)"; exit 1; }
-    echo "Files changed between snapshots $pre and $post:"
-    sudo snapper -c root status "$pre..$post" | head -n 40
-    echo
-    echo "Reverting restores these files to snapshot $pre. Packages and kernel modules"
-    echo "take full effect after a reboot. For a whole-system rollback, boot the snapshot instead."
-    read -rp "Revert these changes? [y/N] " ok
-    [[ $ok =~ ^[Yy]$ ]] || { echo "Nothing changed."; exit 0; }
-    exec sudo snapper -c root undochange "$pre..$post"
+  mok)
+    case "${2:-status}" in
+      status)
+        echo "secure boot: $(mokutil --sb-state 2>/dev/null || echo '?')"
+        echo "nvidia key:  $(mok_state)"
+        echo "modules signed with: $(cat /usr/share/tegendo-os/mok/SIGNED_WITH 2>/dev/null || echo 'n/a (no NVIDIA in this image)')"
+        ;;
+      enroll)
+        [[ -f $MOK_CERT ]] || { echo "This image has no tegendo-os key (dev build or no NVIDIA)."; exit 1; }
+        state=$(mok_state)
+        [[ $state == "not enrolled"* ]] || { echo "Nothing to do: $state"; exit 0; }
+        echo "This lets your firmware trust NVIDIA modules signed by your tegendo-os key."
+        echo "Key fingerprint (compare with image/nvidia/tegendo-mok.der in your repo):"
+        openssl x509 -inform DER -in "$MOK_CERT" -noout -fingerprint -sha256
+        echo
+        echo "You'll pick a one-time password now and type it once after rebooting:"
+        echo "  blue 'MOK management' screen -> Enroll MOK -> Continue -> Yes -> password -> Reboot."
+        sudo mokutil --import "$MOK_CERT"
+        echo "Done. Reboot to finish enrollment."
+        ;;
+      *) echo "usage: tos mok [status|enroll]"; exit 1 ;;
+    esac
     ;;
   friday-log)
     log="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os/friday/audit.jsonl"
     [[ -f $log ]] || { echo "No Friday activity yet."; exit 0; }
     tail -n "${2:-20}" "$log" |
-      jq -r '[.ts[11:16], .tier, .tool, .decision, (if .snapshot_pre then "snap \(.snapshot_pre)" else "" end)] | @tsv'
+      jq -r '[.ts[11:16], .tier, .tool, .decision, (.staged // .backup // "")] | @tsv'
     ;;
-  ""|-h|--help) sed -n '2,12p' "$0" ;;
-  *) echo "tos: unknown command '$1'"; sed -n '2,12p' "$0"; exit 1 ;;
+  ""|-h|--help) sed -n '2,14p' "$0" ;;
+  *) echo "tos: unknown command '$1'"; sed -n '2,14p' "$0"; exit 1 ;;
 esac
