@@ -133,17 +133,22 @@ jobs:
         if: github.event_name != 'pull_request'
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
-      # What a machine does on update: every tag must be the signed digest and
-      # pass `cosign verify` with the key the image ships.
+      # What a machine does on update: every tag must be the signed digest, and
+      # that digest must pass the policy the image ships, checked with the
+      # image's own skopeo (the library bootc uses). Not `cosign verify --key`:
+      # it trips over the newer-format keyless signature on the same digest.
       - name: Every tag is signed
         if: github.event_name != 'pull_request'
         run: |
           for tag in "$FEDORA_VERSION" "$FEDORA_VERSION-$STAMP" latest "sha-${GITHUB_SHA::7}"; do
             got=$(skopeo inspect --authfile ~/.docker/config.json --format '{{ .Digest }}' "docker://$IMAGE:$tag")
             [[ $got == "$DIGEST" ]] || { echo "::error::$tag -> $got, signed digest is $DIGEST"; exit 1; }
-            cosign verify --key image/signing/cosign.pub "$IMAGE:$tag" >/dev/null
-            echo "$tag -> $DIGEST: signed"
+            echo "$tag -> $DIGEST"
           done
+          podman run --rm --network host -v ~/.docker/config.json:/run/auth.json:ro localhost/tegendo-os:ci \
+            skopeo copy -q --authfile /run/auth.json --policy /etc/containers/policy.json \
+            "docker://$IMAGE:$FEDORA_VERSION" dir:/var/tmp/verify
+          echo "$IMAGE:$FEDORA_VERSION passes the policy machines enforce"
 
       - name: Summary
         if: github.event_name != 'pull_request'
