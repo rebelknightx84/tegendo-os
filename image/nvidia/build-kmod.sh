@@ -47,7 +47,15 @@ echo "nvidia: building for kernel $kver"
 enable_rpmfusion "$here"
 # Open kernel modules (MIT/GPL), the ones NVIDIA recommends for Turing and newer.
 echo '%_with_kmod_nvidia_open 1' >/etc/rpm/macros.nvidia-kmod
-dnf -y install --setopt=install_weak_deps=False "kernel-devel-$kver" akmods akmod-nvidia openssl cpio
+# Build tools first, with their install scripts (akmods' creates the 'akmods'
+# build user). Then akmod-nvidia with scripts off: its own script tries to
+# build right away as root, which akmods refuses and dnf counts as a failed
+# install. We run the build ourselves below, for the right kernel.
+dnf -y install --setopt=install_weak_deps=False "kernel-devel-$kver" akmods openssl cpio
+dnf -y install --setopt=install_weak_deps=False --setopt=tsflags=noscripts akmod-nvidia
+# Container builds can leave these with odd permissions, which breaks rpmbuild.
+chmod 1777 /tmp /var/tmp
+mkdir -p /var/lib/alternatives
 # Newer RPM Fusion packages also read this switch; set it too if present.
 [[ -f /etc/nvidia/kernel.conf ]] && sed -i 's/^MODULE_VARIANT=.*/MODULE_VARIANT=kernel-open/' /etc/nvidia/kernel.conf
 
