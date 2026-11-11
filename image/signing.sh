@@ -23,7 +23,7 @@ root=${3:-}
 pub_src=$ctx/image/signing/cosign.pub
 [[ -s $pub_src ]] || { echo "signing: $pub_src is missing; run tools/make-cosign-key.sh" >&2; exit 1; }
 grep -q 'BEGIN PUBLIC KEY' "$pub_src" || { echo "signing: $pub_src isn't a PEM public key" >&2; exit 1; }
-[[ $repo =~ ^[a-z0-9.-]+(/[a-z0-9._-]+)+$ ]] || { echo "signing: bad image repo '$repo'" >&2; exit 1; }
+[[ $repo =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] || { echo "signing: bad image repo '$repo'" >&2; exit 1; }
 
 keypath=/etc/pki/containers/tegendo-os.pub
 install -Dm644 "$pub_src" "$root$keypath"
