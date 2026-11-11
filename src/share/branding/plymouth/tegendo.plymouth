@@ -1,0 +1,57 @@
+[Plymouth Theme]
+Name=Tegendo OS
+Description=Tegendo OS boot splash: Fedora's spinner with the Tegendo logo on Tokyo Night.
+ModuleName=two-step
+
+# Same layout engine as Fedora's spinner/bgrt themes (which also draw the
+# disk-encryption password prompt). Spinner images are copied from Fedora's
+# spinner theme at build time; watermark.png is ours.
+[two-step]
+Font=Cantarell 12
+TitleFont=Cantarell Light 30
+ImageDir=/usr/share/plymouth/themes/tegendo
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.62
+TitleHorizontalAlignment=.5
+TitleVerticalAlignment=.62
+HorizontalAlignment=.5
+VerticalAlignment=.75
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.4
+Transition=none
+TransitionDuration=0.0
+BackgroundStartColor=0x1a1b26
+BackgroundEndColor=0x13141c
+ProgressBarBackgroundColor=0x414868
+ProgressBarForegroundColor=0x7aa2f7
+MessageBelowAnimation=true
+
+[boot-up]
+UseEndAnimation=false
+
+[shutdown]
+UseEndAnimation=false
+
+[reboot]
+UseEndAnimation=false
+
+[updates]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Installing Updates...
+SubTitle=Do not turn off your computer
+
+[system-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading System...
+SubTitle=Do not turn off your computer
+
+[firmware-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading Firmware...
+SubTitle=Do not turn off your computer

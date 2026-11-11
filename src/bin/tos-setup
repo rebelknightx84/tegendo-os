@@ -16,7 +16,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os"
 STAMP="$STATE/setup-version"
 VERSION=$(cat "$SHARE/VERSION" 2>/dev/null || echo dev)
-DEFAULT_THEME=${TOS_DEFAULT_THEME:-tokyo-night}
+DEFAULT_THEME=${TOS_DEFAULT_THEME:-tegendo}
 
 if [[ ${1:-} != --force && -f $STAMP && $(cat "$STAMP") == "$VERSION" ]]; then
   exit 0

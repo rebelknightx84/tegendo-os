@@ -36,6 +36,7 @@ install -Dm644 -t /usr/share/polkit-1/actions "$CTX"/src/polkit/*.policy
 share=/usr/share/tegendo-os
 install -d "$share"
 cp -r "$CTX/vendor/omarchy/themes" "$CTX/vendor/omarchy/themed" "$share/"
+cp -r "$CTX/src/share/themes/." "$share/themes/"   # our own themes (tegendo = the default)
 cp -r "$CTX/src/share/cosmic" "$share/cosmic"
 install -d "$share/skills"
 cp -r "$CTX/vendor/omarchy/skills/." "$CTX/src/skills/." "$share/skills/"
@@ -77,3 +78,7 @@ systemctl enable tailscaled.service
 # Atomic: automatic staged updates of the base OS are off; `tos update` is
 # explicit, so a broken upstream build never surprises you mid-week.
 systemctl disable bootc-fetch-apply-updates.timer 2>/dev/null || true
+
+# ---- branding: name, logo, boot splash, fastfetch, welcome --------------------------
+# Last, because it rebuilds the initramfs from everything installed above.
+"$CTX/image/branding.sh" "$CTX" "$TOS_VERSION"

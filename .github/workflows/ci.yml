@@ -19,7 +19,7 @@ jobs:
       - name: Tools
         run: pip install --quiet shellcheck-py
       - name: shellcheck
-        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper src/libexec/tos-flatpak-provision image/nvidia/build-kmod.sh image/nvidia/install.sh
+        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper src/libexec/tos-flatpak-provision image/nvidia/build-kmod.sh image/nvidia/install.sh image/branding.sh src/share/profile.d/tegendo-welcome.sh
       - name: python
         run: python3 -m py_compile src/bin/tos-theme src/bin/tos-mcp src/lib/tos_redact.py
       - name: XML (polkit policy, firewalld zone)
@@ -66,7 +66,7 @@ jobs:
       - name: Generate COSMIC theme files
         run: |
           mkdir -p "$RUNNER_TEMP/ron"
-          for t in vendor/omarchy/themes/*/; do
+          for t in vendor/omarchy/themes/*/ src/share/themes/*/; do
             TOS_SHARE=src/share python3 src/bin/tos-theme cosmic-ron --colors "$t/colors.toml" \
               > "$RUNNER_TEMP/ron/$(basename "$t").ron"
           done
