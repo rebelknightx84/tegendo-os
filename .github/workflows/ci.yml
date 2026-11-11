@@ -19,7 +19,7 @@ jobs:
       - name: Tools
         run: pip install --quiet shellcheck-py
       - name: shellcheck
-        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper src/libexec/tos-flatpak-provision image/nvidia/build-kmod.sh image/nvidia/install.sh image/branding.sh src/share/profile.d/tegendo-welcome.sh
+        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper src/libexec/tos-flatpak-provision image/nvidia/build-kmod.sh image/nvidia/install.sh image/branding.sh src/share/profile.d/tegendo-welcome.sh image/signing.sh
       - name: python
         run: python3 -m py_compile src/bin/tos-theme src/bin/tos-mcp src/lib/tos_redact.py
       - name: XML (polkit policy, firewalld zone)
@@ -40,6 +40,16 @@ jobs:
         run: sudo python3 -m unittest tests.test_tos_mcp.HelperTests -v
       - name: Flatpak provisioning (image/flatpaks.txt, against a stub flatpak)
         run: tests/flatpak-provision.sh
+
+  signing:
+    # End to end: CI's signing script + the image's policy, checked by the same
+    # library bootc uses. Throwaway key; no secrets.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Signed images pass, unsigned and wrong-key images don't
+        run: tests/signing-policy.sh
 
   theme-parity:
     runs-on: ubuntu-latest

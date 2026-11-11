@@ -1,15 +1,17 @@
 # Builds the tegendo-os bootc image.
 #   pull requests: build only (proves the image builds and passes bootc lint)
-#   main, daily schedule, manual: build, push to ghcr.io, sign (keyless, Sigstore)
+#   main, daily schedule, manual: build, rechunk, push to ghcr.io, sign
+#     - with the cosign key (COSIGN_PRIVATE_KEY): what machines enforce
+#     - keyless (GitHub OIDC, Rekor): public provenance anyone can check
 # The daily rebuild picks up Fedora's security updates for the base image.
 name: image
 
 on:
   pull_request:
-    paths: [image/**, src/**, vendor/**, NOTICE, .github/workflows/image.yml]
+    paths: [image/**, src/**, vendor/**, NOTICE, tools/ci-sign.sh, .github/workflows/image.yml]
   push:
     branches: [main]
-    paths: [image/**, src/**, vendor/**, NOTICE, .github/workflows/image.yml]
+    paths: [image/**, src/**, vendor/**, NOTICE, tools/ci-sign.sh, .github/workflows/image.yml]
   schedule:
     - cron: "17 9 * * *"
   workflow_dispatch:
@@ -26,7 +28,8 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    # 26.04 for its newer podman, which the rechunk step needs (as ublue's image-template).
+    runs-on: ubuntu-26.04
     # A normal build takes ~15 min; fail fast instead of hanging for 6 hours.
     timeout-minutes: 60
     permissions:
@@ -69,6 +72,23 @@ jobs:
           fi
           podman run --rm localhost/tegendo-os:ci test ! -e /etc/pki/akmods/private
 
+      # Split the image into ~100 content-based layers so updates download only
+      # what changed (Universal Blue's image-template recipe). Runs on PRs too, to test it.
+      - name: Rechunk
+        run: |
+          graphroot=$(podman info --format '{{ .Store.GraphRoot }}')
+          podman run --rm --pull=never --privileged \
+            --mount=type=image,src=localhost/tegendo-os:ci,target=/rpm-ostree \
+            --mount=type=bind,src="$graphroot",target=/run/host-container-storage,rw \
+            --mount=type=tmpfs,target=/run/rpm-ostree-storage \
+            --entrypoint /usr/bin/rpm-ostree \
+            localhost/tegendo-os:ci \
+            compose build-chunked-oci --max-layers 127 --format-version=2 --bootc \
+            --rootfs /rpm-ostree \
+            --output "containers-storage:[overlay@/run/host-container-storage+/run/rpm-ostree-storage]localhost/tegendo-os:ci"
+          echo "layers: $(podman inspect localhost/tegendo-os:ci --format '{{ len .RootFS.Layers }}')"
+          podman run --rm localhost/tegendo-os:ci bootc container lint
+
       - name: Image name
         if: github.event_name != 'pull_request'
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tegendo-os" >> "$GITHUB_ENV"
@@ -90,7 +110,20 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
-      - name: Sign (keyless, recorded in the Rekor transparency log)
+      # What machines enforce (policy.json → image/signing/cosign.pub).
+      # Published builds refuse to finish without it.
+      - name: Sign with the cosign key
+        if: github.event_name != 'pull_request'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          [[ -n "$COSIGN_PRIVATE_KEY" ]] ||
+            { echo "COSIGN_PRIVATE_KEY secret is missing (tools/make-cosign-key.sh)"; exit 1; }
+          tools/ci-sign.sh "$IMAGE@$DIGEST"
+          cosign verify --key image/signing/cosign.pub "$IMAGE@$DIGEST" >/dev/null
+          echo "verified against image/signing/cosign.pub"
+
+      - name: Sign keyless (public provenance, Rekor transparency log)
         if: github.event_name != 'pull_request'
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
@@ -101,6 +134,7 @@ jobs:
             echo "### tegendo-os image"
             echo "- \`$IMAGE:$FEDORA_VERSION\` → \`$DIGEST\`"
             echo "- NVIDIA driver: \`$(podman run --rm localhost/tegendo-os:ci sh -c 'rpm -q --qf "%{VERSION} " xorg-x11-drv-nvidia; cat /usr/share/tegendo-os/mok/SIGNED_WITH' 2>/dev/null | tr '\n' ' ')\`"
-            echo "- Switch a Fedora COSMIC Atomic machine: \`sudo bootc switch $IMAGE:$FEDORA_VERSION\`"
+            echo "- Switch a Fedora COSMIC Atomic machine: \`sudo bootc switch --enforce-container-sigpolicy $IMAGE:$FEDORA_VERSION\` (already on it: \`tos signing enforce\`)"
+            echo "- Verify (key): \`cosign verify --key image/signing/cosign.pub $IMAGE@$DIGEST\`"
             echo "- Verify: \`cosign verify $IMAGE@$DIGEST --certificate-identity-regexp '^https://github.com/$GITHUB_REPOSITORY/' --certificate-oidc-issuer https://token.actions.githubusercontent.com\`"
           } >> "$GITHUB_STEP_SUMMARY"
