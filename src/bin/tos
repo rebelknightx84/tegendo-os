@@ -85,7 +85,8 @@ case "${1:-}" in
         [[ $state == "not enrolled"* ]] || { echo "Nothing to do: $state"; exit 0; }
         echo "This lets your firmware trust NVIDIA modules signed by your tegendo-os key."
         echo "Key fingerprint (compare with image/nvidia/tegendo-mok.der in your repo):"
-        openssl x509 -inform DER -in "$MOK_CERT" -noout -fingerprint -sha256
+        # A cert's SHA-256 fingerprint is the SHA-256 of its DER bytes (no openssl in the base image).
+        sha256sum "$MOK_CERT" | cut -d' ' -f1 | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//'
         echo
         echo "You'll pick a one-time password now and type it once after rebooting:"
         echo "  blue 'MOK management' screen -> Enroll MOK -> Continue -> Yes -> password -> Reboot."
