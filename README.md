@@ -59,6 +59,8 @@ previous one.
    Check with `tos status`.
 4. NVIDIA machines: `tos mok enroll`, reboot, approve the key in the blue
    MOK Manager screen, then turn Secure Boot on in the firmware.
+5. `tos signing enforce`, then reboot: from now on this machine only installs
+   OS images signed with your key.
 
 If the image is private, add a read-only registry token to
 `/etc/ostree/auth.json` first (see [docs/SECURITY.md](docs/SECURITY.md)).
@@ -74,6 +76,7 @@ tos doctor [question]          tos doctor crash <pid>
 tos agent "prompt"
 tos setup [--force]            # re-run per-user setup
 tos mok [status|enroll]        # Secure Boot key for the NVIDIA driver
+tos signing [status|enforce]   # only install OS updates signed with your key
 tos friday-log                 # what Friday did
 tos-mcp --list-tools           # Friday's tools and their tiers
 ```
@@ -112,6 +115,9 @@ src/share/themes/       our own themes (tegendo, the default)
 vendor/omarchy/         pinned, data-only slice of Omarchy (themes, templates, crash skill)
 tools/upstream-sync.sh  the only way upstream content enters this repo
 tools/make-mok-key.sh   one-time: your NVIDIA module-signing key
+tools/make-cosign-key.sh  one-time: your image-signing key (machines enforce it)
+tools/ci-sign.sh        how CI signs images (also used by tests/signing-policy.sh)
+image/signing.sh        the image's update-signing policy
 tools/render-branding.sh  re-render the branding PNGs after editing the SVGs
 tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a real MCP client), Flatpak provisioning
 .github/workflows/      ci.yml (lint + tests), image.yml (build, push, sign)
@@ -130,9 +136,9 @@ tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a 
 1. **Done:** themes, doctor, crash watcher; Friday's OS connector (tos-mcp).
 2. **Done (v0.3):** Fedora COSMIC Atomic bootc image, built and signed in CI.
 3. **Done (v0.4):** NVIDIA in the image (signed with your key), gaming Flatpak set.
-   **Now (v0.5):** Tegendo OS branding (name, logo, boot splash, default theme, terminal welcome).
-4. **Next:** signature-enforced updates; Friday's Super+Space assistant and
-   proactive watchers.
+   **Done (v0.5):** Tegendo OS branding (name, logo, boot splash, default theme, terminal welcome).
+   **Now (v0.6):** signature-enforced updates; rechunked images for smaller updates.
+4. **Next:** Friday's Super+Space assistant and proactive watchers.
 5. **v2/v3: one-click app menu** (Omarchy-style): a curated catalog of
    Flatpaks and Distrobox recipes for .deb apps, installable with one click.
    Friday installs from the same catalog, so there's one approved list.

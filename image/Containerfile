@@ -29,7 +29,9 @@ RUN --mount=type=bind,source=image/nvidia,target=/ctx/nvidia,ro \
 FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 
 ARG FEDORA_VERSION
-ARG TOS_VERSION=0.5.0
+ARG TOS_VERSION=0.6.0
+# Where this image is published; machines only accept updates from here signed with image/signing/cosign.pub.
+ARG TOS_IMAGE_REPO=ghcr.io/rebelknightx84/tegendo-os
 LABEL org.opencontainers.image.title="tegendo-os" \
       org.opencontainers.image.description="Fedora COSMIC Atomic with Friday, NVIDIA, gaming, themes and hardening" \
       org.opencontainers.image.version="${TOS_VERSION}" \
@@ -41,7 +43,7 @@ LABEL org.opencontainers.image.title="tegendo-os" \
 # except what build.sh copies on purpose. Only stage 1's /out comes across.
 RUN --mount=type=bind,source=.,target=/ctx,ro \
     --mount=type=bind,from=nvidia-kmod,source=/out,target=/nvidia,ro \
-    TOS_VERSION="${TOS_VERSION}" FEDORA_VERSION="${FEDORA_VERSION}" /ctx/image/build.sh
+    TOS_VERSION="${TOS_VERSION}" FEDORA_VERSION="${FEDORA_VERSION}" TOS_IMAGE_REPO="${TOS_IMAGE_REPO}" /ctx/image/build.sh
 
 # bootc's own checks: the image must be a valid, bootable bootc image.
 RUN bootc container lint

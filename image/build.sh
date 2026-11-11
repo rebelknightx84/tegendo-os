@@ -79,6 +79,9 @@ systemctl enable tailscaled.service
 # explicit, so a broken upstream build never surprises you mid-week.
 systemctl disable bootc-fetch-apply-updates.timer 2>/dev/null || true
 
+# ---- update signing: only accept images signed with our key (once enforced) -------
+"$CTX/image/signing.sh" "$CTX" "${TOS_IMAGE_REPO:?}"
+
 # ---- branding: name, logo, boot splash, fastfetch, welcome --------------------------
 # Last, because it rebuilds the initramfs from everything installed above.
 "$CTX/image/branding.sh" "$CTX" "$TOS_VERSION"
