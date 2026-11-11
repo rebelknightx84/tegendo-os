@@ -78,15 +78,21 @@ else
     -keyout "$pki/private/private_key.priv" -outform DER -out "$pki/certs/public_key.der" 2>/dev/null
   signed_with=throwaway
 fi
-chgrp -R akmods "$pki" 2>/dev/null || true
+# akmods builds and signs as its own 'akmods' user: it must be able to read the key.
+chgrp -R akmods "$pki"
+chmod 750 "$pki/private"
+chmod 640 "$pki/private/private_key.priv"
 
 # ---- build ---------------------------------------------------------------------------
-if ! akmods --force --kernels "$kver" --kmod nvidia; then
-  cat /var/cache/akmods/nvidia/*.failed.log 2>/dev/null || true
-  die "akmods failed to build the NVIDIA modules for $kver"
-fi
+# akmods can report a failed build and still exit 0, so judge by its output.
+akmods --force --kernels "$kver" --kmod nvidia || true
 mapfile -t rpms < <(find /var/cache/akmods/nvidia -name "kmod-nvidia-${kver}-*.rpm")
-(( ${#rpms[@]} == 1 )) || die "expected one kmod-nvidia RPM for $kver, found ${#rpms[@]}"
+if (( ${#rpms[@]} != 1 )); then
+  for log in /var/cache/akmods/nvidia/*.log; do
+    [[ -f $log ]] && { echo "===== $log"; tail -n 150 "$log"; }
+  done
+  die "expected one kmod-nvidia RPM for $kver, found ${#rpms[@]}"
+fi
 
 # ---- verify: open modules, signed by the expected key ------------------------------------
 expected_signer=$(openssl x509 -inform DER -in "$pki/certs/public_key.der" -noout -subject -nameopt multiline |
@@ -99,7 +105,8 @@ for m in "${mods[@]}"; do
   signer=$(modinfo -F signer "$m")
   license=$(modinfo -F license "$m")
   [[ $signer == "$expected_signer" ]] || die "$(basename "$m") signed by '$signer', expected '$expected_signer'"
-  [[ $license == "Dual MIT/GPL" ]] || die "$(basename "$m") has license '$license'; expected the open modules"
+  # Open modules are GPL-dual-licensed (MIT/GPL, peermem BSD/GPL); the closed ones say "NVIDIA".
+  [[ $license == Dual*GPL ]] || die "$(basename "$m") has license '$license'; expected the open modules"
   echo "nvidia: ok $(basename "$m") (signer: $signer, $license)"
 done
 
