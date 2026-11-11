@@ -39,11 +39,33 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
 
+      # NVIDIA modules are signed with your Machine Owner Key (secret
+      # MOK_PRIVATE_KEY, created by tools/make-mok-key.sh). Published builds
+      # require it; pull-request builds never see it and use a throwaway key.
       - name: Build
+        env:
+          MOK_PRIVATE_KEY: ${{ github.event_name != 'pull_request' && secrets.MOK_PRIVATE_KEY || '' }}
+          REQUIRE_MOK_KEY: ${{ github.event_name != 'pull_request' && '1' || '0' }}
         run: |
+          secret_args=()
+          if [[ -n "$MOK_PRIVATE_KEY" ]]; then
+            keyfile=$(umask 077; mktemp -p "$RUNNER_TEMP")
+            trap 'shred -u "$keyfile"' EXIT
+            printf '%s\n' "$MOK_PRIVATE_KEY" >"$keyfile"
+            secret_args=(--secret "id=mok_key,src=$keyfile")
+          fi
           podman build -f image/Containerfile \
             --build-arg FEDORA_VERSION="$FEDORA_VERSION" \
+            --build-arg REQUIRE_MOK_KEY="$REQUIRE_MOK_KEY" \
+            "${secret_args[@]}" \
             -t localhost/tegendo-os:ci .
+          # The private key must not be anywhere in the finished image.
+          if [[ -n "$MOK_PRIVATE_KEY" ]]; then
+            sed -n 2p "$keyfile" | podman run --rm -i localhost/tegendo-os:ci \
+              sh -c 'needle=$(cat); ! grep -rqsF -- "$needle" /usr /etc /var' ||
+              { echo "MOK private key material found in the image"; exit 1; }
+          fi
+          podman run --rm localhost/tegendo-os:ci test ! -e /etc/pki/akmods/private
 
       - name: Image name
         if: github.event_name != 'pull_request'
@@ -76,6 +98,7 @@ jobs:
           {
             echo "### tegendo-os image"
             echo "- \`$IMAGE:$FEDORA_VERSION\` → \`$DIGEST\`"
+            echo "- NVIDIA driver: \`$(podman run --rm localhost/tegendo-os:ci sh -c 'rpm -q --qf "%{VERSION} " xorg-x11-drv-nvidia; cat /usr/share/tegendo-os/mok/SIGNED_WITH' 2>/dev/null | tr '\n' ' ')\`"
             echo "- Switch a Fedora COSMIC Atomic machine: \`sudo bootc switch $IMAGE:$FEDORA_VERSION\`"
             echo "- Verify: \`cosign verify $IMAGE@$DIGEST --certificate-identity-regexp '^https://github.com/$GITHUB_REPOSITORY/' --certificate-oidc-issuer https://token.actions.githubusercontent.com\`"
           } >> "$GITHUB_STEP_SUMMARY"

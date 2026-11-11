@@ -27,5 +27,8 @@ jetbrains-mono-fonts-all
 distrobox               # run Ubuntu/Debian-only apps in a container
 gdb                     # crash diagnosis (with debuginfod, preconfigured on Fedora)
 
+# --- gaming (the apps themselves are Flatpaks: image/flatpaks.txt) ------------
+steam-devices           # udev rules for controllers and VR; the Steam Flatpak can't add them
+
 # --- networking --------------------------------------------------------------
 tailscale               # in Fedora's own repos since F41

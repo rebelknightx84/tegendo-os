@@ -23,7 +23,9 @@ through a commit you made.**
 | Fedora COSMIC Atomic image + Fedora repos | the base OS and every package | Fedora-signed packages; our image is built in CI and Sigstore-signed |
 | Omarchy | themes, `.tpl` templates, diagnose-crash skill (markdown) | pinned to a full commit SHA, allowlisted paths, no executables/symlinks, reviewed in a PR, parity-tested in CI |
 | libcosmic | two palette files (data) | copied once, versioned in git |
-| Flathub | desktop apps you choose | per-user Flatpaks, sandboxed; Friday installs only with your click |
+| RPM Fusion nonfree | the NVIDIA driver only | enabled only during the image build, limited to `*nvidia*` packages, verified with RPM Fusion's key as shipped by Fedora (`distribution-gpg-keys`); the repo is removed before the image is finished |
+| NVIDIA kernel modules | built from RPM Fusion's akmod-nvidia in a throwaway build stage | signed in CI with your Machine Owner Key; the build checks the signer and that they're the open modules; machines trust them only after `tos mok enroll` |
+| Flathub | the image's Flatpak set (`image/flatpaks.txt`) and apps you choose | sandboxed; the set installs system-wide on boot; Friday installs per-user only with your click |
 
 Omarchy's theme engine is shell scripts. Rather than run them, `tos-theme`
 re-implements the color resolver and template renderer in Python, and

@@ -19,7 +19,7 @@ jobs:
       - name: Tools
         run: pip install --quiet shellcheck-py
       - name: shellcheck
-        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper
+        run: shellcheck -x tools/*.sh tests/*.sh image/build.sh src/bin/tos src/bin/tos-setup src/bin/tos-doctor src/bin/tos-crash-watch src/bin/tos-agent src/libexec/tos-helper src/libexec/tos-flatpak-provision image/nvidia/build-kmod.sh image/nvidia/install.sh
       - name: python
         run: python3 -m py_compile src/bin/tos-theme src/bin/tos-mcp src/lib/tos_redact.py
       - name: XML (polkit policy, firewalld zone)
@@ -38,6 +38,8 @@ jobs:
         run: python3 -m unittest tests/test_tos_mcp.py -v
       - name: Root-helper refusal tests (stop before changing anything)
         run: sudo python3 -m unittest tests.test_tos_mcp.HelperTests -v
+      - name: Flatpak provisioning (image/flatpaks.txt, against a stub flatpak)
+        run: tests/flatpak-provision.sh
 
   theme-parity:
     runs-on: ubuntu-latest

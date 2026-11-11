@@ -1,0 +1,77 @@
+#!/usr/bin/bash
+# =============================================================================
+# tos-flatpak-provision — installs the image's Flatpak set (flatpaks.txt)
+# system-wide from Flathub. Run by tos-flatpak-provision.service at boot; does
+# nothing unless the list changed since the last successful run.
+#
+#   --dry-run   print what would happen, change nothing (used by CI)
+#
+# Never removes anything. A failed install leaves the stamp unwritten, so the
+# next boot (or the service's retry) tries again.
+# =============================================================================
+set -euo pipefail
+
+LIST=${TOS_FLATPAK_LIST:-/usr/share/tegendo-os/flatpaks.txt}
+STATE=${TOS_STATE_DIR:-/var/lib/tegendo-os}
+FLATPAK=${TOS_FLATPAK_BIN:-flatpak}
+APP_ID_RE='^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}$'
+
+dry=0
+[[ ${1:-} == --dry-run ]] && dry=1
+
+run() {
+  if ((dry)); then printf 'would run: %s\n' "$*"; else "$@"; fi
+}
+
+[[ -f $LIST ]] || { echo "no list at $LIST"; exit 0; }
+hash=$(sha256sum "$LIST" | cut -d' ' -f1)
+stamp=$STATE/flatpaks.sha256
+if ((!dry)) && [[ -f $stamp && $(<"$stamp") == "$hash" ]]; then
+  echo "Flatpak set unchanged; nothing to do."
+  exit 0
+fi
+
+# Flathub, unfiltered. Fedora may ship it filtered or not at all.
+run "$FLATPAK" remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+run "$FLATPAK" remote-modify --system --enable --no-filter flathub
+
+failed=0
+while read -r id opt extra; do
+  [[ $id =~ $APP_ID_RE ]] || { echo "skipping invalid ID: $id" >&2; failed=1; continue; }
+  [[ -z ${extra:-} ]] || { echo "skipping $id: unexpected '$extra'" >&2; failed=1; continue; }
+  ref=$id branch=()
+  case ${opt:-} in
+    "") ;;
+    runtime-of=*)
+      app=${opt#runtime-of=}
+      [[ $app =~ $APP_ID_RE ]] || { echo "skipping $id: bad runtime-of '$app'" >&2; failed=1; continue; }
+      if runtime=$("$FLATPAK" info --system --show-runtime "$app" </dev/null 2>/dev/null); then
+        branch=("${runtime##*/}") ref="$id//${runtime##*/}"
+      elif ((dry)); then
+        ref="$id//<runtime branch of $app>"
+      else
+        echo "skipping $id: $app isn't installed" >&2; failed=1; continue
+      fi
+      ;;
+    *) echo "skipping $id: unknown option '$opt'" >&2; failed=1; continue ;;
+  esac
+  if "$FLATPAK" info --system "$id" "${branch[@]}" </dev/null >/dev/null 2>&1; then
+    echo "present: $ref"
+    continue
+  fi
+  echo "installing: $ref"
+  run "$FLATPAK" install --system --noninteractive -y flathub "$ref" </dev/null || failed=1
+done < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$LIST" | grep -v '^[[:space:]]*$')
+
+# Also pulls the NVIDIA GL extension that matches the host driver, if any.
+run "$FLATPAK" update --system --noninteractive -y || failed=1
+
+if ((failed)); then
+  echo "Some Flatpaks failed; will retry." >&2
+  exit 1
+fi
+if ((!dry)); then
+  install -d -m755 "$STATE"
+  echo "$hash" >"$stamp"
+fi
+echo "Flatpak set is in place."

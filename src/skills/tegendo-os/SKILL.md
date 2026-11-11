@@ -58,7 +58,12 @@ command. Rollback is the person's (`tos undo`), not yours.
    it drifts the machine away from its image.
 4. Official Fedora repos only. No COPR, no third-party repos, no RPMs
    downloaded from websites, unless the person decides to add one to the
-   image themselves.
+   image themselves. The one standing exception is RPM Fusion for the
+   NVIDIA driver, used only at image build time (`image/nvidia/`).
+5. **Image-wide Flatpaks** (Steam, ProtonUp-Qt, Protontricks, MangoHud,
+   gamescope, Flatseal) are listed in `image/flatpaks.txt` and installed
+   system-wide on boot by `tos-flatpak-provision.service`. To add one for
+   every machine, the person adds a line there.
 
 ## Rules
 
@@ -84,9 +89,16 @@ command. Rollback is the person's (`tos undo`), not yours.
   default, key-only if enabled.
 - GPU: varies by machine. Check `gpu_status` or
   `lspci -nn | grep -iE 'vga|3d|display'`. Laptops may be hybrid
-  (AMD/Intel integrated + NVIDIA discrete). NVIDIA's proprietary driver,
-  when present, comes from the image (signed for Secure Boot), never from
-  a live install.
+  (AMD/Intel integrated + NVIDIA discrete). The NVIDIA driver (open kernel
+  modules, from RPM Fusion) is in the image, signed with the person's own
+  Machine Owner Key. With Secure Boot on, the modules load only after
+  `tos mok enroll` and a reboot; `tos mok status` shows where that stands.
+  If `nvidia-smi` fails with Secure Boot on, check enrollment first, not
+  the driver. Never suggest disabling Secure Boot or installing akmods/DKMS.
+- Gaming: Steam is the Flatpak (`com.valvesoftware.Steam`); Proton versions
+  via ProtonUp-Qt; per-game fixes via Protontricks; launch options like
+  `mangohud %command%` or `gamescope -- %command%`. Controller udev rules
+  come from the `steam-devices` package in the image.
 - `/etc` is writable and merged across updates; `/usr` is read-only;
   `/var` and `/home` are machine state.
 - Display: Wayland, COSMIC compositor (`cosmic-comp`). Terminal: Kitty.

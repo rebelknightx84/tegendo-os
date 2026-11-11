@@ -1,0 +1,19 @@
+# Flatpaks every tegendo-os machine gets, installed system-wide from Flathub on
+# first boot and again whenever this list changes (tos-flatpak-provision).
+# Only missing apps are installed; nothing is ever removed. If you uninstall
+# one, it stays gone until this file changes.
+#
+# Format: <app ID> [runtime-of=<app ID>]
+#   runtime-of=X installs the extension branch matching app X's runtime (needed
+#   for Vulkan layers, which must match the runtime the game runs in).
+
+# --- gaming ------------------------------------------------------------------
+com.valvesoftware.Steam
+net.davidotek.pupgui2                                  # ProtonUp-Qt: Proton-GE and other Proton/Wine builds
+com.github.Matoking.protontricks                       # per-game Windows fixes
+org.freedesktop.Platform.VulkanLayer.MangoHud  runtime-of=com.valvesoftware.Steam   # FPS/perf overlay
+org.freedesktop.Platform.VulkanLayer.gamescope runtime-of=com.valvesoftware.Steam   # Valve's game compositor (FSR, frame limits)
+# com.heroicgameslauncher.hgl                          # Epic / GOG / Amazon games: uncomment if you want it
+
+# --- system ------------------------------------------------------------------
+com.github.tchx84.Flatseal                             # review and tighten Flatpak permissions

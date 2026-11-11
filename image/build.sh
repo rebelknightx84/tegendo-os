@@ -19,12 +19,17 @@ mapfile -t pkgs < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$CTX/image/packages
 dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}"
 dnf clean all
 
+# ---- NVIDIA (signed modules from the nvidia-kmod stage + matching userspace) ------
+# The only step that touches RPM Fusion; see image/nvidia/install.sh.
+"$CTX/image/nvidia/install.sh" /nvidia
+
 # ---- tegendo-os tools -------------------------------------------------------------
 install -Dm755 -t /usr/bin \
   "$CTX/src/bin/tos" "$CTX/src/bin/tos-theme" "$CTX/src/bin/tos-mcp" "$CTX/src/bin/tos-doctor" \
   "$CTX/src/bin/tos-agent" "$CTX/src/bin/tos-crash-watch" "$CTX/src/bin/tos-setup"
 install -Dm644 "$CTX/src/lib/tos_redact.py" /usr/lib/tegendo-os/tos_redact.py
 install -Dm755 "$CTX/src/libexec/tos-helper" /usr/lib/tegendo-os/tos-helper
+install -Dm755 "$CTX/src/libexec/tos-flatpak-provision" /usr/lib/tegendo-os/tos-flatpak-provision
 install -Dm644 -t /usr/share/polkit-1/actions "$CTX"/src/polkit/*.policy
 
 # ---- shared data: themes (Omarchy, pinned), palettes, skills ----------------------
@@ -37,8 +42,15 @@ cp -r "$CTX/vendor/omarchy/skills/." "$CTX/src/skills/." "$share/skills/"
 install -m644 "$CTX/vendor/omarchy/UPSTREAM.lock" "$share/UPSTREAM.lock"
 install -m644 "$CTX/vendor/omarchy/LICENSE" "$share/OMARCHY-LICENSE"
 install -m644 "$CTX/NOTICE" "$share/NOTICE"
+install -m644 "$CTX/image/flatpaks.txt" "$share/flatpaks.txt"
 echo "$TOS_VERSION" >"$share/VERSION"
 find "$share" -type d -exec chmod 755 {} + && find "$share" -type f -exec chmod 644 {} +
+
+# ---- the image's Flatpak set (Steam, Proton tools, ...) -------------------------------
+# Installed system-wide from Flathub on first boot, and again whenever
+# image/flatpaks.txt changes. Apps you remove stay removed until the list changes.
+install -Dm644 -t /usr/lib/systemd/system "$CTX/src/systemd/tos-flatpak-provision.service"
+systemctl enable tos-flatpak-provision.service
 
 # ---- per-user services --------------------------------------------------------------
 install -Dm644 -t /usr/lib/systemd/user "$CTX/src/systemd/tos-crash-watch.service"

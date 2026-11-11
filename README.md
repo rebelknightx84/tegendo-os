@@ -1,6 +1,6 @@
 # tegendo-os
 
-**Fedora COSMIC Atomic + Friday + the best of Omarchy, as one signed image.**
+**Fedora COSMIC Atomic + NVIDIA + Steam + Friday + the best of Omarchy, as one signed image.**
 
 A personal operating system defined in this repo and built by CI as a
 [bootc](https://containers.github.io/bootc/) image. Your machines run that
@@ -31,6 +31,11 @@ previous one.
 - **Hardening**: SELinux enforcing, a firewall zone that drops inbound
   traffic, key-only SSH (off by default), official Fedora repos only, signed
   images, explicit updates.
+- **NVIDIA, Secure Boot-ready**: the driver's open kernel modules are built
+  in CI and signed with your own key; enroll it once with `tos mok enroll`.
+- **Gaming**: Steam, ProtonUp-Qt (Proton-GE), Protontricks, MangoHud,
+  gamescope and Flatseal install on first boot (`image/flatpaks.txt`), plus
+  controller support (`steam-devices`).
 - **Software, the atomic way**: desktop apps as Flatpaks, dev and
   Ubuntu-only tools in Distrobox, system packages in `image/packages.txt`.
 
@@ -43,8 +48,11 @@ previous one.
    sudo bootc switch ghcr.io/rebelknightx84/tegendo-os:45
    systemctl reboot
    ```
-3. Log in. `tos-setup` runs once on its own (theme, Friday, Flathub).
+3. Log in. `tos-setup` runs once on its own (theme, Friday, Flathub), and
+   the Flatpak set installs in the background once you're online.
    Check with `tos status`.
+4. NVIDIA machines: `tos mok enroll`, reboot, approve the key in the blue
+   MOK Manager screen, then turn Secure Boot on in the firmware.
 
 If the image is private, add a read-only registry token to
 `/etc/ostree/auth.json` first (see [docs/SECURITY.md](docs/SECURITY.md)).
@@ -59,6 +67,7 @@ tos theme list | current | set <name>
 tos doctor [question]          tos doctor crash <pid>
 tos agent "prompt"
 tos setup [--force]            # re-run per-user setup
+tos mok [status|enroll]        # Secure Boot key for the NVIDIA driver
 tos friday-log                 # what Friday did
 tos-mcp --list-tools           # Friday's tools and their tiers
 ```
@@ -67,7 +76,13 @@ tos-mcp --list-tools           # Friday's tools and their tiers
 
 Edit the repo, open a PR, merge when CI is green, then `tos update` on each
 machine. To add a system package, add a line to `image/packages.txt`
-(official Fedora repos only).
+(official Fedora repos only). To give every machine a Flatpak, add it to
+`image/flatpaks.txt`.
+
+**One-time setup for NVIDIA signing** (before the first build on main):
+run `tools/make-mok-key.sh`, put the private key in the `MOK_PRIVATE_KEY`
+repository secret, commit `image/nvidia/tegendo-mok.der`. Builds on main
+refuse to publish without it.
 
 ## Layout
 
@@ -75,16 +90,20 @@ machine. To add a system package, add a line to `image/packages.txt`
 image/Containerfile     the OS: Fedora COSMIC Atomic + build.sh
 image/build.sh          installs packages, tools, data, hardening (runs at build time only)
 image/packages.txt      system packages, official repos only
+image/flatpaks.txt      Flatpaks every machine gets (Steam, Proton tools, ...)
+image/nvidia/           NVIDIA: build + sign modules (stage 1), install (stage 2), RPM Fusion repo
 image/system/           firewalld zone, sshd drop-in
 src/bin/                tos, tos-theme, tos-mcp, tos-doctor, tos-agent, tos-crash-watch, tos-setup
 src/lib/                tos_redact.py (shared secret scrubbing)
 src/libexec/tos-helper  the only code Friday can run as root (via polkit)
+src/libexec/tos-flatpak-provision  installs image/flatpaks.txt on boot
 src/polkit/             password-every-time policy for tos-helper
 src/skills/             the tegendo-os skill (teaches agents how this system works)
 src/share/cosmic/       COSMIC base palettes (from libcosmic, MPL-2.0)
 vendor/omarchy/         pinned, data-only slice of Omarchy (themes, templates, crash skill)
 tools/upstream-sync.sh  the only way upstream content enters this repo
-tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a real MCP client)
+tools/make-mok-key.sh   one-time: your NVIDIA module-signing key
+tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a real MCP client), Flatpak provisioning
 .github/workflows/      ci.yml (lint + tests), image.yml (build, push, sign)
 ```
 
@@ -99,10 +118,14 @@ tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a 
 ## Roadmap
 
 1. **Done:** themes, doctor, crash watcher; Friday's OS connector (tos-mcp).
-2. **Now (v0.3):** Fedora COSMIC Atomic bootc image, built and signed in CI.
-3. **Next:** NVIDIA in the image (signed kernel module), signature-enforced
-   updates, Friday's Super+Space assistant and proactive watchers.
-4. **Later:** a COSMIC panel applet for Friday; an installer ISO from the same
+2. **Done (v0.3):** Fedora COSMIC Atomic bootc image, built and signed in CI.
+3. **Now (v0.4):** NVIDIA in the image (signed with your key), gaming Flatpak set.
+4. **Next:** signature-enforced updates; Friday's Super+Space assistant and
+   proactive watchers.
+5. **v2/v3: one-click app menu** (Omarchy-style): a curated catalog of
+   Flatpaks and Distrobox recipes for .deb apps, installable with one click.
+   Friday installs from the same catalog, so there's one approved list.
+6. **Later:** a COSMIC panel applet for Friday; an installer ISO from the same
    image (interactive, never an unattended disk wipe), with known hardware
    fixes applied automatically.
 

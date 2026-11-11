@@ -10,7 +10,8 @@
   1025-65535 in; this doesn't. `tailscale0` sits in the `trusted` zone.
 - **SSH:** off. If you enable it: key-only, no root login, no X11 forwarding.
 - **Packages:** official Fedora repos only (CI checks `image/packages.txt`).
-  No COPR or third-party repos; Tailscale comes from Fedora's own repo.
+  No COPR; Tailscale comes from Fedora's own repo. **One exception: the
+  NVIDIA driver from RPM Fusion nonfree**, see below.
 - **Updates are explicit:** the auto-apply timer (which reboots on its own) is
   disabled. `tos update` stages; you reboot when ready.
 - **Upstream content:** Omarchy themes are pinned by SHA, allowlisted,
@@ -39,11 +40,41 @@
 - **Disk encryption (LUKS):** pick it in the Fedora installer. It can't be
   added in place.
 - **Secure Boot:** works out of the box with Fedora's signed shim and kernel.
-- **NVIDIA (not in the image yet):** the proprietary driver needs a kernel
-  module signed with a key your firmware trusts (one-time MOK enrollment).
-  Options to decide on: build and sign the module in CI with your own key
-  (most control, most work), or reuse Universal Blue's prebuilt signed
-  modules (less work, but you trust their signing key with kernel code).
+- **Secure Boot + NVIDIA:** after the first switch to an image with NVIDIA,
+  run `tos mok enroll`, reboot, and approve the key in the blue MOK Manager
+  screen. Then turn Secure Boot on in the firmware. `tos mok status` checks.
+
+## NVIDIA driver
+
+- **Source:** RPM Fusion nonfree, the long-standing community repo Fedora
+  itself offers for NVIDIA. NVIDIA's own repo had no Fedora 45 build when
+  this was set up; switching later means editing `image/nvidia/`.
+- **Scope:** the repo exists only inside the image build, only for packages
+  named `*nvidia*`, and is deleted before the image is finished. Its signing
+  key comes from Fedora's `distribution-gpg-keys` package, so RPM Fusion's
+  key reaches you through Fedora. Nothing compiles on your machines (no
+  akmods/DKMS in the image).
+- **Open kernel modules** (MIT/GPL). The build fails if it gets anything else.
+- **Your key, your kernel trust.** CI signs the modules with your Machine
+  Owner Key (`tools/make-mok-key.sh`; private half in the `MOK_PRIVATE_KEY`
+  GitHub secret, public cert committed at `image/nvidia/tegendo-mok.der`).
+  The build checks the key matches the cert and every module's signer, and
+  CI checks the finished image contains no trace of the private key.
+  **Anyone with that private key can get kernel code trusted by your
+  machines**: keep it in your password manager, not on disk; protect the
+  GitHub account with a hardware key. Pull-request builds never see it.
+- **Rotation** means a new cert, re-enrolling every machine (`tos mok
+  enroll`), and removing the old one (`mokutil --delete`).
+
+## Gaming
+
+- Steam and tools are Flathub Flatpaks (`image/flatpaks.txt`), installed
+  system-wide on boot. Flathub is enabled unfiltered for this.
+- `steam-devices` (Fedora) adds udev rules giving your user access to game
+  controllers and VR headsets, a deliberate widening of device access.
+- Steam's Flatpak sandbox is broad by design (devices, network, some of home).
+  Flatseal (included) shows and tightens it; anti-cheat and Proton may break
+  if you tighten too far.
 
 ## Things to watch
 

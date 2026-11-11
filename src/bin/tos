@@ -10,7 +10,23 @@
 #   tos setup [--force]                 re-run per-user setup
 #   tos status                          image, version, health summary
 #   tos friday-log [n]                  what Friday did recently
+#   tos mok [status|enroll]             Secure Boot key for the NVIDIA driver
 set -euo pipefail
+
+MOK_CERT=/usr/share/tegendo-os/mok/tegendo-mok.der
+
+mok_state() {
+  [[ -f $MOK_CERT ]] || { echo "no key in this image"; return; }
+  # Parse mokutil's words, not its exit code (which differs across versions).
+  local out
+  out=$(mokutil --test-key "$MOK_CERT" 2>&1 || true)
+  case $out in
+    *"already in the enrollment request"*) echo "pending: reboot and finish enrollment in MOK Manager" ;;
+    *"already enrolled"*) echo "enrolled" ;;
+    *"not enrolled"*) echo "not enrolled (run: tos mok enroll)" ;;
+    *) echo "unknown (${out%%$'\n'*})" ;;
+  esac
+}
 
 case "${1:-}" in
   theme)  shift; exec tos-theme "$@" ;;
@@ -51,6 +67,33 @@ case "${1:-}" in
     echo "failed units: $(systemctl --failed --no-legend --plain | wc -l)"
     systemctl --user is-active --quiet tos-crash-watch && echo "crash watch: on" || echo "crash watch: off"
     echo "selinux: $(getenforce 2>/dev/null || echo '?')"
+    if [[ -f /usr/share/tegendo-os/mok/SIGNED_WITH ]]; then
+      echo "nvidia: driver $(cat /sys/module/nvidia/version 2>/dev/null || echo 'not loaded'), key $(mok_state)"
+    fi
+    [[ -f /var/lib/tegendo-os/flatpaks.sha256 ]] && echo "flatpak set: installed" || echo "flatpak set: pending (needs network; see systemctl status tos-flatpak-provision)"
+    ;;
+  mok)
+    case "${2:-status}" in
+      status)
+        echo "secure boot: $(mokutil --sb-state 2>/dev/null || echo '?')"
+        echo "nvidia key:  $(mok_state)"
+        echo "modules signed with: $(cat /usr/share/tegendo-os/mok/SIGNED_WITH 2>/dev/null || echo 'n/a (no NVIDIA in this image)')"
+        ;;
+      enroll)
+        [[ -f $MOK_CERT ]] || { echo "This image has no tegendo-os key (dev build or no NVIDIA)."; exit 1; }
+        state=$(mok_state)
+        [[ $state == "not enrolled"* ]] || { echo "Nothing to do: $state"; exit 0; }
+        echo "This lets your firmware trust NVIDIA modules signed by your tegendo-os key."
+        echo "Key fingerprint (compare with image/nvidia/tegendo-mok.der in your repo):"
+        openssl x509 -inform DER -in "$MOK_CERT" -noout -fingerprint -sha256
+        echo
+        echo "You'll pick a one-time password now and type it once after rebooting:"
+        echo "  blue 'MOK management' screen -> Enroll MOK -> Continue -> Yes -> password -> Reboot."
+        sudo mokutil --import "$MOK_CERT"
+        echo "Done. Reboot to finish enrollment."
+        ;;
+      *) echo "usage: tos mok [status|enroll]"; exit 1 ;;
+    esac
     ;;
   friday-log)
     log="${XDG_STATE_HOME:-$HOME/.local/state}/tegendo-os/friday/audit.jsonl"
@@ -58,6 +101,6 @@ case "${1:-}" in
     tail -n "${2:-20}" "$log" |
       jq -r '[.ts[11:16], .tier, .tool, .decision, (.staged // .backup // "")] | @tsv'
     ;;
-  ""|-h|--help) sed -n '2,13p' "$0" ;;
-  *) echo "tos: unknown command '$1'"; sed -n '2,13p' "$0"; exit 1 ;;
+  ""|-h|--help) sed -n '2,14p' "$0" ;;
+  *) echo "tos: unknown command '$1'"; sed -n '2,14p' "$0"; exit 1 ;;
 esac
