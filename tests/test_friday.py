@@ -212,6 +212,90 @@ class OllamaAndFallbackTests(unittest.TestCase):
         self.assertFalse(marker.exists())
 
 
+class ShortcutTests(unittest.TestCase):
+    def setUp(self):
+        from friday import shortcut
+        self.s = shortcut
+        self.dir = Path(tempfile.mkdtemp())
+        self.path = self.dir / "custom"
+        self.state = self.dir / "state"
+        self.state.mkdir()
+
+    USER = '{\n    (\n        modifiers: [\n            Super,\n            Alt,\n        ],\n        key: "e",\n    ): Spawn("kitty --title \\"x, y\\""),\n'
+
+    def test_moves_v07_super_space_and_keeps_user_entries(self):
+        self.path.write_text(self.USER + '    (modifiers: [Super], key: "space"): Spawn("tos-friday"),\n}\n')
+        (self.state / "friday-shortcut-added").touch()
+        self.assertEqual(self.s.migrate(self.path, self.state), "set to Alt+space")
+        text = self.path.read_text()
+        self.assertIn('Spawn("kitty --title \\"x, y\\"")', text)   # user's entry verbatim
+        self.assertNotIn('modifiers: [Super], key: "space"', text)   # old binding gone
+        self.assertEqual(self.s.current(self.path), "Alt+space")
+        self.assertEqual(text.count("tos-friday"), 1)
+        self.assertEqual(self.s.migrate(self.path, self.state), "unchanged (already set up)")
+
+    def test_respects_user_choices(self):
+        self.path.write_text('{\n    (modifiers: [Super], key: "d"): Spawn("tos-friday"),\n}\n')
+        self.assertIn("your choice", self.s.migrate(self.path, self.state))
+        self.assertEqual(self.s.current(self.path), "Super+d")
+        other = self.dir / "s2"
+        other.mkdir()
+        (other / "friday-shortcut-added").touch()           # v0.7 added it, user removed it since
+        empty = self.dir / "empty"
+        self.assertIn("removed", self.s.migrate(empty, other))
+        self.assertFalse(empty.exists())
+
+    def test_new_user_gets_default(self):
+        self.assertEqual(self.s.migrate(self.path, self.state), "set to Alt+space")
+
+    def test_set_binding_validation(self):
+        self.path.write_text(self.USER + "}\n")
+        with self.assertRaises(ValueError):
+            self.s.set_binding("Super+Alt+e", self.path)            # already the user's
+        for bad in ("space", "Hyper+x", 'Alt+x"): Spawn("rm', "Alt+"):
+            with self.assertRaises(ValueError):
+                self.s.set_binding(bad, self.path)
+        self.assertEqual(self.s.set_binding("ctrl+SHIFT+k", self.path), "Ctrl+Shift+k")
+        self.assertEqual(self.s.label("Alt+space"), "Alt + Space")
+
+    def test_refuses_unparseable_file(self):
+        self.path.write_text("not ron at all")
+        with self.assertRaises(ValueError):
+            self.s.set_binding("Alt+space", self.path)
+        self.assertEqual(self.path.read_text(), "not ron at all")
+
+
+class SettingsTests(unittest.TestCase):
+    def setUp(self):
+        from friday import settings
+        self.st = settings
+        self.conf = Path(tempfile.mkdtemp()) / "agent.conf"
+        self.conf.write_text("# mine\nTOS_AGENT=codex\nTOS_OLLAMA_URL='http://old:11434'\n")
+
+    def test_write_conf_keeps_other_keys(self):
+        self.st.write_conf({"TOS_OLLAMA_URL": "http://box:11434", "TOS_FRIDAY_BACKEND": "ollama"}, self.conf)
+        text = self.conf.read_text()
+        self.assertIn("# mine", text)
+        self.assertIn("TOS_AGENT=codex", text)
+        self.assertIn("TOS_OLLAMA_URL='http://box:11434'", text)
+        self.assertIn("TOS_FRIDAY_BACKEND='ollama'", text)
+        self.assertEqual(oct(self.conf.stat().st_mode & 0o777), "0o600")
+
+    def test_write_conf_refuses_shell(self):
+        for bad in ("$(id)", "a b", "x';rm -rf ~;'"):
+            with self.assertRaises(ValueError):
+                self.st.write_conf({"TOS_OLLAMA_MODEL": bad}, self.conf)
+
+    def test_ollama_check(self):
+        ok, msg = self.st.test_ollama(ollama_server(), "")
+        self.assertTrue(ok, msg)
+        ok, msg = self.st.test_ollama(ollama_server(), "qwen3:14b")
+        self.assertFalse(ok)                                    # the fake server has no models
+        self.assertIn("isn't pulled", msg)
+        ok, msg = self.st.test_ollama("http://127.0.0.1:9", "x", timeout=1)
+        self.assertFalse(ok)
+
+
 class RealToolsTests(unittest.TestCase):
     def test_real_tos_mcp_lists_tools_with_tiers(self):
         real = str(ROOT / "src/bin/tos-mcp")

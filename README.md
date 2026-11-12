@@ -25,7 +25,7 @@ previous version.
 
 ## Highlights
 
-**Friday, on Super+Space.** Press it anywhere and ask about the machine. Friday
+**Friday, on Alt+Space.** Press it anywhere and ask about the machine. Friday
 uses real system tools to check failed services, disk, updates, the GPU and
 logs, shows each tool as it runs, and answers in plain words. It uses Claude
 when Claude Code is signed in and falls back to your own local model otherwise.
@@ -104,7 +104,7 @@ see [Make it yours](#make-it-yours).
 ## Everyday use
 
 ```text
-Super+Space                    Friday
+Alt+Space                      Friday (gear icon or Ctrl+, for settings)
 tos status                     image, version, theme, signing, NVIDIA, health
 tos update                     stage the newest image and update Flatpaks (reboot to apply)
 tos undo                       boot the previous image (only you can; Friday can't)
@@ -182,7 +182,7 @@ tests/                      tos-mcp (with a real MCP client), Friday, signing po
 - [x] NVIDIA signed with your own key; gaming set
 - [x] Tegendo OS branding
 - [x] Signature-enforced, rechunked updates
-- [x] Friday on Super+Space
+- [x] Friday on Alt+Space, with a settings page
 - [ ] Proactive Friday: notices failed services, a filling disk or a crash, and offers a fix
 - [ ] Origin labels in approval dialogs (did you ask, or did something Friday read ask?)
 - [ ] One-click app catalog (Flatpaks and Distrobox recipes), shared with Friday

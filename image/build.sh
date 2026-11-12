@@ -29,7 +29,7 @@ install -Dm755 -t /usr/bin \
   "$CTX/src/bin/tos-agent" "$CTX/src/bin/tos-crash-watch" "$CTX/src/bin/tos-setup" \
   "$CTX/src/bin/tos-friday"
 install -Dm644 "$CTX/src/lib/tos_redact.py" /usr/lib/tegendo-os/tos_redact.py
-install -Dm644 -t /usr/lib/tegendo-os/friday "$CTX"/src/lib/friday/*.py   # Friday (Super+Space)
+install -Dm644 -t /usr/lib/tegendo-os/friday "$CTX"/src/lib/friday/*.py   # Friday (Alt+Space)
 python3 -m compileall -q /usr/lib/tegendo-os/friday
 install -Dm644 "$CTX/src/applications/org.tegendo.Friday.desktop" /usr/share/applications/org.tegendo.Friday.desktop
 install -Dm755 "$CTX/src/libexec/tos-helper" /usr/lib/tegendo-os/tos-helper

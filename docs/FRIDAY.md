@@ -10,33 +10,41 @@ tos friday-log                                      # what Friday did
 tos undo                                            # boot the previous OS image (only you can)
 ```
 
-## Super+Space
+## Alt+Space
 
-Press **Super+Space** anywhere and Friday drops down over your windows (Esc
+Press **Alt+Space** anywhere and Friday drops down over your windows (Esc
 hides it; press again to toggle). Ask in plain words, or pick a starter:
 "What needs my attention?", "Any updates waiting?", "Why is my disk filling
 up?", "Did anything crash recently?". Friday checks the real state with the
 tools below, shows each one it uses (✓ done, ✗ denied), and answers.
 
 - **Brain:** Claude through Claude Code when it's installed and signed in;
-  otherwise, or if Claude can't answer, the local model from `agent.conf`
-  (`TOS_OLLAMA_URL`, `TOS_OLLAMA_MODEL`). Force one with
-  `TOS_FRIDAY_BACKEND=claude|ollama` and pick a Claude model with
-  `TOS_FRIDAY_MODEL=` (both in `~/.config/tegendo-os/agent.conf`).
+  otherwise, or if Claude can't answer, your local model (Ollama).
 - **Only tegendo-os tools.** Claude Code runs with `--tools ""` (no shell,
   files or web), `--strict-mcp-config` (none of your other MCP servers) and
   only tos-mcp. The local model gets exactly the same tos-mcp tools.
 - **Approvals stay the OS's.** When Friday calls a user or system tool it
   hides itself, so the approval dialog is never underneath it, and comes
   back when you've answered.
-- **Your own instructions:** put them in `~/.config/tegendo-os/friday.md`
-  (tone, what to call you, things to always check). They're added to Friday's
-  system prompt.
 - **Conversation:** kept while Friday runs (Ctrl+N starts a new one). Claude
   Code stores its sessions in `~/.claude`, as for any Claude Code use.
-- The shortcut is added to your COSMIC custom shortcuts once; change or
-  remove it in Settings > Keyboard > Shortcuts and it stays that way. It
-  replaces COSMIC's Super+Space keyboard-layout switch.
+
+### Settings (gear icon, Ctrl+, or "Friday Settings" in the app menu)
+
+| Setting | Stored in |
+|---|---|
+| Answer with: Claude then local / Claude only / local only; Claude model; local model server and model, with a connection test | `~/.config/tegendo-os/agent.conf` (`TOS_FRIDAY_BACKEND`, `TOS_FRIDAY_MODEL`, `TOS_OLLAMA_URL`, `TOS_OLLAMA_MODEL`) |
+| Shortcut: press a new combo, or reset to Alt+Space | COSMIC's custom shortcuts; only Friday's entry is touched, and a combo you already use is refused |
+| Your instructions: tone, what to call you, what to always check | `~/.config/tegendo-os/friday.md`, added to Friday's system prompt |
+| Start with your session (instant open) | `~/.config/autostart/tos-friday.desktop` (`Hidden=true` turns it off) |
+| Terminal welcome | `~/.config/tegendo-os/no-welcome` (present = off) |
+| Activity log; clear conversation | `~/.local/state/tegendo-os/friday/audit.jsonl` |
+
+From a terminal: `tos-friday --shortcut`, `tos-friday --set-shortcut Super+d`.
+
+**Why not Super+Space:** v0.7 used it, but COSMIC opens its search when Super
+is released, so the two fought. Machines that had it are moved to Alt+Space
+once, by `tos-setup`; a shortcut you picked yourself is never changed.
 
 ## Permission tiers, enforced by the OS
 
@@ -78,7 +86,7 @@ Details that matter:
 - **Origin labels aren't possible in plain MCP clients.** An MCP server can't tell whether
   a request came from you or from a web page the AI read. The mockup's
   "Origin: you asked" and auto-blocking need the Friday front end (panel or
-  Super+Space), which knows what content entered the conversation. Until then
+  Alt+Space), which knows what content entered the conversation. Until then
   the gate is you, reading the dialog.
 - **Read tools are automatic**, so logs reach the AI after redaction.
   Redaction is pattern-based, not perfect.
