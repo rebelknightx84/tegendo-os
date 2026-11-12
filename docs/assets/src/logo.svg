@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Tegendo OS</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7aa2f7"/>
+      <stop offset="1" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="120" fill="url(#g)"/>
+  <!-- T: crossbar and stem, a small gap between them -->
+  <rect x="112" y="152" width="288" height="84" rx="42" fill="#1a1b26"/>
+  <rect x="214" y="250" width="84" height="170" rx="42" fill="#1a1b26"/>
+  <!-- spark: Friday -->
+  <path d="M372 64 C376 94 386 104 416 108 C386 112 376 122 372 152 C368 122 358 112 328 108 C358 104 368 94 372 64 Z" fill="#1a1b26"/>
+</svg>

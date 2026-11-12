@@ -2,13 +2,15 @@
 
 ## Pick an agent
 
-Edit `~/.config/tegendo-os/agent.conf` (created on first login by `tos setup`)`~/.config/tegendo-os/agent.conf` directly):
+Edit `~/.config/tegendo-os/agent.conf` (created on first login by `tos setup`).
+It's read as `KEY=value` lines. Friday (Super+Space) uses Claude first and the
+`ollama` settings as its fallback; `tos agent` and `tos doctor` use `TOS_AGENT`.
 
 | Agent | Where data goes | Can it act? | Setup |
 |---|---|---|---|
 | `claude` | Anthropic (cloud) | yes, asks before each command or edit | install Claude Code (its native installer, into your home folder) |
 | `codex` | OpenAI (cloud) | yes, asks for anything untrusted | install Codex CLI |
-| `ollama` | your network only | **no**, gives advice only | `tos_ollama_url: http://stormbreaker:11434` over Tailscale, or `tos_ollama_local: true` |
+| `ollama` | your network only | in `tos agent`: **no**, advice only. As Friday's fallback: tos-mcp's tools, with the same approval dialogs | `TOS_OLLAMA_URL=http://your-ollama-host:11434` (e.g. over Tailscale) and `TOS_OLLAMA_MODEL=qwen3:14b` |
 | `custom` | your call | your call | `TOS_AGENT_CMD=opencode` etc. (prompt appended as one argument) |
 
 ## What `tos doctor` sends
@@ -43,5 +45,4 @@ minute. Clicking "Diagnose" opens Kitty running `tos doctor crash <pid>`,
 which still asks before sending. "Don't show again" mutes that program
 (`~/.config/tegendo-os/crash-mute/<name>`; delete the file to unmute).
 
-Turn it off with `tos_crash_watch: false` or
-`systemctl --user disable --now tos-crash-watch`.
+Turn it off with `systemctl --user disable --now tos-crash-watch`.
