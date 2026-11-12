@@ -3,7 +3,7 @@
 ## Pick an agent
 
 Edit `~/.config/tegendo-os/agent.conf` (created on first login by `tos setup`).
-It's read as `KEY=value` lines. Friday (Super+Space) uses Claude first and the
+It's read as `KEY=value` lines. Friday (Alt+Space) uses Claude first and the
 `ollama` settings as its fallback; `tos agent` and `tos doctor` use `TOS_AGENT`.
 
 | Agent | Where data goes | Can it act? | Setup |

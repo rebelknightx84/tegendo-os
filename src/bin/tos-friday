@@ -1,9 +1,13 @@
 #!/usr/bin/python3 -I
-"""tos-friday: open/close Friday (bound to Super+Space).
+"""tos-friday: open/close Friday (Alt+Space by default).
 
-  tos-friday              toggle the Friday window
-  tos-friday --show       open it
-  tos-friday --background start hidden (login autostart, so Super+Space is instant)
+  tos-friday                     toggle the Friday window
+  tos-friday --show              open it
+  tos-friday --settings          open it on the settings page
+  tos-friday --background        start hidden (login autostart, so the shortcut is instant)
+  tos-friday --shortcut          print Friday's shortcut
+  tos-friday --set-shortcut C    e.g. Alt+space, Super+d (only Friday's entry is changed)
+  tos-friday --migrate-shortcut  tos-setup: move v0.7's Super+Space to Alt+Space, once
 
 One instance per user (GApplication); later calls toggle the running one.
 """
@@ -11,6 +15,23 @@ import os
 import sys
 
 LIB = os.environ.get("TOS_LIB", "/usr/lib/tegendo-os")
+
+# Shortcut commands need no display or GTK.
+if len(sys.argv) > 1 and sys.argv[1] in ("--shortcut", "--set-shortcut", "--migrate-shortcut"):
+    sys.path.insert(0, LIB)
+    from friday import shortcut
+    try:
+        if sys.argv[1] == "--shortcut":
+            print(shortcut.current() or "not set")
+        elif sys.argv[1] == "--set-shortcut":
+            print(shortcut.set_binding(sys.argv[2] if len(sys.argv) > 2 else shortcut.DEFAULT))
+        else:
+            print(shortcut.migrate())
+    except (ValueError, OSError) as e:
+        print(f"tos-friday: {e}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
 LAYER_SHELL = "/usr/lib64/libgtk4-layer-shell.so.0"
 
 # gtk4-layer-shell must load before libwayland-client, so preload it once.

@@ -1,2 +1,2 @@
-"""Friday: the Tegendo OS assistant (Super+Space). Standard library + GTK only."""
-VERSION = "0.1.0"
+"""Friday: the Tegendo OS assistant (Alt+Space). Standard library + GTK only."""
+VERSION = "0.2.0"
