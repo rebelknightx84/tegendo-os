@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Friday (background)
+Comment=Starts Friday hidden so Super+Space opens it instantly
+Exec=tos-friday --background
+Icon=tegendo-logo
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

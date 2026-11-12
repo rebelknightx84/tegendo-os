@@ -1,0 +1,25 @@
+#!/usr/bin/python3 -I
+"""tos-friday: open/close Friday (bound to Super+Space).
+
+  tos-friday              toggle the Friday window
+  tos-friday --show       open it
+  tos-friday --background start hidden (login autostart, so Super+Space is instant)
+
+One instance per user (GApplication); later calls toggle the running one.
+"""
+import os
+import sys
+
+LIB = os.environ.get("TOS_LIB", "/usr/lib/tegendo-os")
+LAYER_SHELL = "/usr/lib64/libgtk4-layer-shell.so.0"
+
+# gtk4-layer-shell must load before libwayland-client, so preload it once.
+if (os.environ.get("WAYLAND_DISPLAY") and os.path.exists(LAYER_SHELL)
+        and LAYER_SHELL not in os.environ.get("LD_PRELOAD", "")):
+    env = dict(os.environ, LD_PRELOAD=":".join(filter(None, [LAYER_SHELL, os.environ.get("LD_PRELOAD")])))
+    os.execve(sys.executable, [sys.executable, "-I", *sys.argv], env)
+
+sys.path.insert(0, LIB)
+from friday.app import main  # noqa: E402
+
+sys.exit(main(sys.argv))

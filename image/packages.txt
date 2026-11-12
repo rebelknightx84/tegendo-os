@@ -13,6 +13,7 @@ pciutils                # lspci (GPU detection)
 python3
 
 # --- terminal & everyday CLI -------------------------------------------------
+gtk4-layer-shell        # Friday floats above windows like COSMIC's launcher (Super+Space)
 fastfetch               # system info with the Tegendo logo (terminal welcome)
 kitty                   # Ghostty isn't in Fedora's repos; Kitty is, and themes support it
 btop
