@@ -4,7 +4,12 @@
 #   tools/ci-sign.sh signs an image on a local registry exactly as CI does;
 #   image/signing.sh writes the policy exactly as the image build does;
 #   skopeo (same containers/image library bootc uses) must then
-#     accept the signed image, and reject an unsigned one and a wrong-key one.
+#     accept the signed image, and reject an unsigned one and a wrong-key one,
+#     while images from other repos are still accepted unsigned;
+#   and the policy's top-level default must be "reject": bootc refuses to
+#     enforce signatures under an insecureAcceptAnything default (found on the
+#     laptop: "containers-policy.json specifies a default of
+#     insecureAcceptAnything; refusing usage").
 # Needs: podman, skopeo, cosign, jq, openssl. Run from the repo root (CI does).
 # =============================================================================
 set -euo pipefail
@@ -39,6 +44,7 @@ push() {   # push <tag> <content>; prints the digest
 }
 signed=$(push signed "signed $RANDOM")
 unsigned=$(push unsigned "unsigned $RANDOM")
+other=$(repo=localhost:5000/someone-else/app push other "other repo $RANDOM")
 wrongkey=$(push wrongkey "wrong key $RANDOM")
 
 COSIGN_PRIVATE_KEY=$(cat "$work/key.pem") tools/ci-sign.sh "$repo@$signed" \
@@ -52,10 +58,10 @@ jq --arg repo "$repo" --arg key "$work/sysroot/etc/pki/containers/tegendo-os.pub
   '.transports.docker[$repo][0].keyPath = $key' \
   "$work/sysroot/etc/containers/policy.json" >"$work/policy.json"
 
-fetch() {   # fetch <digest>: copy with the policy enforced
+fetch() {   # fetch <digest> [repo]: copy with the policy enforced
   skopeo --registries.d "$work/sysroot/etc/containers/registries.d" copy -q \
     --policy "$work/policy.json" --src-tls-verify=false \
-    "docker://$repo@$1" "dir:$work/out-$RANDOM"
+    "docker://${2:-$repo}@$1" "dir:$work/out-$RANDOM"
 }
 
 fetch "$signed" || fail "the correctly signed image was rejected"
@@ -64,7 +70,13 @@ if fetch "$unsigned" 2>"$work/err"; then fail "an unsigned image was accepted"; 
 echo "ok: unsigned image rejected ($(head -c 120 "$work/err"))"
 if fetch "$wrongkey" 2>"$work/err"; then fail "an image signed with another key was accepted"; fi
 echo "ok: wrong-key image rejected ($(head -c 120 "$work/err"))"
-# Other images keep Fedora's default policy.
-jq -e '.default[0].type == "insecureAcceptAnything"' "$work/policy.json" >/dev/null ||
-  fail "default policy changed"
+fetch "$other" localhost:5000/someone-else/app || fail "an image from another repo was rejected"
+echo "ok: other repos unaffected"
+jq -e '.default == [{"type": "reject"}]' "$work/policy.json" >/dev/null ||
+  fail "top-level default must be reject, or bootc refuses to enforce"
+for t in docker docker-daemon docker-archive oci oci-archive containers-storage dir tarball; do
+  jq -e --arg t "$t" '.transports[$t][""] == [{"type": "insecureAcceptAnything"}]' "$work/policy.json" >/dev/null ||
+    fail "transport $t lost its allow-everything default"
+done
+echo "ok: default reject, every transport still allows other images"
 echo "signing policy: all checks passed"
