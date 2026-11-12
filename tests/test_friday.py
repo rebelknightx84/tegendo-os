@@ -128,8 +128,11 @@ class MarkupTests(unittest.TestCase):
         out = to_pango("**bold** *it* `a*b*` [d](https://x.org) [bad](javascript:alert(1))")
         self.assertIn("<b>bold</b>", out)
         self.assertIn("<i>it</i>", out)
-        self.assertIn("\u00a0a*b*\u00a0</span>", out)  # no formatting inside code
-        self.assertIn("flatpak\u00a0uninstall", to_pango("`flatpak uninstall`"))  # commands don't wrap
+        self.assertIn(" a*b* </span>", out)          # no formatting inside code
+        cmd = to_pango("`flatpak uninstall --unused`")
+        self.assertIn('allow_breaks="false"', cmd)   # commands don't wrap mid-command
+        self.assertIn("flatpak uninstall --unused", cmd)   # plain spaces: copy-paste works
+        self.assertNotIn("\u00a0", cmd)
         self.assertIn('<a href="https://x.org">d</a>', out)
         self.assertNotIn('href="javascript', out)    # only http(s) links
 

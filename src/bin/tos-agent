@@ -8,7 +8,7 @@
 # Config: ~/.config/tegendo-os/agent.conf (created by tos-setup, edit freely)
 #   TOS_AGENT=claude|codex|ollama|custom
 #   TOS_AGENT_CMD=...           custom only; the prompt is appended as one arg
-#   TOS_OLLAMA_URL=http://stormbreaker:11434
+#   TOS_OLLAMA_URL=http://your-ollama-host:11434
 #   TOS_OLLAMA_MODEL=qwen3:14b
 #
 # Omarchy launches agents with --yolo / auto-approve so they act without

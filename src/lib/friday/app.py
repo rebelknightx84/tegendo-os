@@ -134,7 +134,9 @@ class FridayWindow(Gtk.ApplicationWindow):
 
     # ---- placement ------------------------------------------------------------------
     def _layer_shell(self) -> bool:
-        if LayerShell is None or not LayerShell.is_supported():
+        display = Gdk.Display.get_default()
+        # Only ask layer-shell on Wayland (it asserts on other backends).
+        if LayerShell is None or display.__gtype__.name != "GdkWaylandDisplay" or not LayerShell.is_supported():
             return False
         LayerShell.init_for_window(self)
         LayerShell.set_namespace(self, "friday")

@@ -27,9 +27,9 @@ def _inline(line: str, code_bg: str) -> str:
     spans: list[str] = []
 
     def keep_code(m: re.Match) -> str:
-        # Non-breaking spaces keep a command on one line instead of wrapping mid-command.
-        code = esc(m.group(1)).replace(" ", "\u00a0")
-        spans.append(f'<span font_family="monospace" background="{code_bg}">\u00a0{code}\u00a0</span>')
+        # allow_breaks keeps a command on one line; plain spaces keep copy-paste working.
+        spans.append(f'<span font_family="monospace" background="{code_bg}" allow_breaks="false"> '
+                     f'{esc(m.group(1))} </span>')
         return f"\x00{len(spans) - 1}\x00"
 
     line = _CODE_SPAN.sub(keep_code, line)
