@@ -16,6 +16,9 @@ previous one.
 
 ## What you get
 
+- **Friday on Super+Space**: an assistant that drops down over your
+  windows, checks the system with tos-mcp's tools and answers; Claude first,
+  your local model as fallback. See [docs/FRIDAY.md](docs/FRIDAY.md).
 - **Friday (tos-mcp)**: Claude, or any MCP client, connected to the OS.
   Reading is automatic and redacted; your settings and Flatpak apps need a
   click; system changes need a click plus your password. There's no shell
@@ -103,7 +106,8 @@ image/flatpaks.txt      Flatpaks every machine gets (Steam, Proton tools, ...)
 image/nvidia/           NVIDIA: build + sign modules (stage 1), install (stage 2), RPM Fusion repo
 image/branding.sh       name (os-release), icon, boot splash + initramfs, fastfetch, welcome
 image/system/           firewalld zone, sshd drop-in
-src/bin/                tos, tos-theme, tos-mcp, tos-doctor, tos-agent, tos-crash-watch, tos-setup
+src/bin/                tos, tos-theme, tos-mcp, tos-doctor, tos-agent, tos-crash-watch, tos-setup, tos-friday
+src/lib/friday/         Friday's window (GTK4 + layer-shell), backends (Claude Code, Ollama), MCP client
 src/lib/                tos_redact.py (shared secret scrubbing)
 src/libexec/tos-helper  the only code Friday can run as root (via polkit)
 src/libexec/tos-flatpak-provision  installs image/flatpaks.txt on boot
@@ -137,8 +141,10 @@ tests/                  renderer parity, COSMIC theme parsing, tos-mcp (incl. a 
 2. **Done (v0.3):** Fedora COSMIC Atomic bootc image, built and signed in CI.
 3. **Done (v0.4):** NVIDIA in the image (signed with your key), gaming Flatpak set.
    **Done (v0.5):** Tegendo OS branding (name, logo, boot splash, default theme, terminal welcome).
-   **Now (v0.6):** signature-enforced updates; rechunked images for smaller updates.
-4. **Next:** Friday's Super+Space assistant and proactive watchers.
+   **Done (v0.6):** signature-enforced updates; rechunked images for smaller updates.
+   **Now (v0.7):** Friday on Super+Space.
+4. **Next:** proactive watchers (failed services, disk space, crashes) and
+   origin labels in approval dialogs.
 5. **v2/v3: one-click app menu** (Omarchy-style): a curated catalog of
    Flatpaks and Distrobox recipes for .deb apps, installable with one click.
    Friday installs from the same catalog, so there's one approved list.

@@ -26,8 +26,12 @@ dnf clean all
 # ---- tegendo-os tools -------------------------------------------------------------
 install -Dm755 -t /usr/bin \
   "$CTX/src/bin/tos" "$CTX/src/bin/tos-theme" "$CTX/src/bin/tos-mcp" "$CTX/src/bin/tos-doctor" \
-  "$CTX/src/bin/tos-agent" "$CTX/src/bin/tos-crash-watch" "$CTX/src/bin/tos-setup"
+  "$CTX/src/bin/tos-agent" "$CTX/src/bin/tos-crash-watch" "$CTX/src/bin/tos-setup" \
+  "$CTX/src/bin/tos-friday"
 install -Dm644 "$CTX/src/lib/tos_redact.py" /usr/lib/tegendo-os/tos_redact.py
+install -Dm644 -t /usr/lib/tegendo-os/friday "$CTX"/src/lib/friday/*.py   # Friday (Super+Space)
+python3 -m compileall -q /usr/lib/tegendo-os/friday
+install -Dm644 "$CTX/src/applications/org.tegendo.Friday.desktop" /usr/share/applications/org.tegendo.Friday.desktop
 install -Dm755 "$CTX/src/libexec/tos-helper" /usr/lib/tegendo-os/tos-helper
 install -Dm755 "$CTX/src/libexec/tos-flatpak-provision" /usr/lib/tegendo-os/tos-flatpak-provision
 install -Dm644 -t /usr/share/polkit-1/actions "$CTX"/src/polkit/*.policy
@@ -60,6 +64,7 @@ enable tos-crash-watch.service
 EOF
 # First-login setup runs inside the graphical session (needs the display).
 install -Dm644 "$CTX/src/autostart/tos-setup.desktop" /etc/xdg/autostart/tos-setup.desktop
+install -Dm644 "$CTX/src/autostart/tos-friday.desktop" /etc/xdg/autostart/tos-friday.desktop
 
 # ---- hardening ----------------------------------------------------------------------
 # Fedora Workstation's default zone allows inbound 1025-65535. Ours drops all

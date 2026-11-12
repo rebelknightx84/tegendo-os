@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Friday
+GenericName=Tegendo OS assistant
+Comment=Ask about this computer and fix things, with your approval (Super+Space)
+Exec=tos-friday --show
+Icon=tegendo-logo
+Terminal=false
+Categories=System;Utility;
+Keywords=assistant;ai;help;troubleshoot;claude;
+StartupNotify=false

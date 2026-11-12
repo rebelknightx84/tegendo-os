@@ -29,7 +29,7 @@ RUN --mount=type=bind,source=image/nvidia,target=/ctx/nvidia,ro \
 FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 
 ARG FEDORA_VERSION
-ARG TOS_VERSION=0.6.0
+ARG TOS_VERSION=0.7.0
 # Where this image is published; machines only accept updates from here signed with image/signing/cosign.pub.
 ARG TOS_IMAGE_REPO=ghcr.io/rebelknightx84/tegendo-os
 LABEL org.opencontainers.image.title="tegendo-os" \

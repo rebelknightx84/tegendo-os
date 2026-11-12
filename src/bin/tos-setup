@@ -65,6 +65,34 @@ if command -v claude >/dev/null && ! claude mcp get tegendo-os >/dev/null 2>&1; 
     say "registered tos-mcp with Claude Code"
 fi
 
+# Super+Space opens Friday. A COSMIC custom shortcut overrides the default one
+# (Super+Space switched keyboard layouts). Added once ever: if you change or
+# remove it in Settings > Keyboard > Shortcuts, it stays the way you left it.
+shortcuts="$CONF/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom"
+if [[ ! -e $STATE/friday-shortcut-added ]] && ! grep -qs 'tos-friday' "$shortcuts"; then
+  if python3 - "$shortcuts" <<'PY'; then
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+entry = '    (modifiers: [Super], key: "space"): Spawn("tos-friday"),\n'
+body = p.read_text().strip() if p.exists() else ""
+if body in ("", "{}"):
+    new = "{\n" + entry + "}\n"
+else:
+    end = body.rfind("}")
+    if end < 0:
+        sys.exit(1)  # not a RON map we understand: leave it alone
+    head = body[:end].rstrip()
+    if not head.endswith((",", "{")):
+        head += ","
+    new = head + "\n" + entry + "}\n"
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(new)
+PY
+    touch "$STATE/friday-shortcut-added"
+    say "Super+Space opens Friday"
+  fi
+fi
+
 # ---- Flatpak: Flathub for your user (apps install without root) ---------------------
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 

@@ -10,6 +10,34 @@ tos friday-log                                      # what Friday did
 tos undo                                            # boot the previous OS image (only you can)
 ```
 
+## Super+Space
+
+Press **Super+Space** anywhere and Friday drops down over your windows (Esc
+hides it; press again to toggle). Ask in plain words, or pick a starter:
+"What needs my attention?", "Any updates waiting?", "Why is my disk filling
+up?", "Did anything crash recently?". Friday checks the real state with the
+tools below, shows each one it uses (✓ done, ✗ denied), and answers.
+
+- **Brain:** Claude through Claude Code when it's installed and signed in;
+  otherwise, or if Claude can't answer, the local model from `agent.conf`
+  (`TOS_OLLAMA_URL`, `TOS_OLLAMA_MODEL`). Force one with
+  `TOS_FRIDAY_BACKEND=claude|ollama` and pick a Claude model with
+  `TOS_FRIDAY_MODEL=` (both in `~/.config/tegendo-os/agent.conf`).
+- **Only tegendo-os tools.** Claude Code runs with `--tools ""` (no shell,
+  files or web), `--strict-mcp-config` (none of your other MCP servers) and
+  only tos-mcp. The local model gets exactly the same tos-mcp tools.
+- **Approvals stay the OS's.** When Friday calls a user or system tool it
+  hides itself, so the approval dialog is never underneath it, and comes
+  back when you've answered.
+- **Your own instructions:** put them in `~/.config/tegendo-os/friday.md`
+  (tone, what to call you, things to always check). They're added to Friday's
+  system prompt.
+- **Conversation:** kept while Friday runs (Ctrl+N starts a new one). Claude
+  Code stores its sessions in `~/.claude`, as for any Claude Code use.
+- The shortcut is added to your COSMIC custom shortcuts once; change or
+  remove it in Settings > Keyboard > Shortcuts and it stays that way. It
+  replaces COSMIC's Super+Space keyboard-layout switch.
+
 ## Permission tiers, enforced by the OS
 
 The AI client's own approval prompts are a convenience. They can be
@@ -44,7 +72,10 @@ Details that matter:
 
 ## Honest limits
 
-- **Origin labels aren't possible here yet.** An MCP server can't tell whether
+- **Origin labels are next.** Friday's window now knows which text you typed
+  and which came from tool output, which is what origin labels need; showing
+  them in tos-mcp's dialogs is the next step.
+- **Origin labels aren't possible in plain MCP clients.** An MCP server can't tell whether
   a request came from you or from a web page the AI read. The mockup's
   "Origin: you asked" and auto-blocking need the Friday front end (panel or
   Super+Space), which knows what content entered the conversation. Until then
